@@ -1,0 +1,1 @@
+-- Esquema de Base de Datos para Sistema de Tienda POS y Scoring Crediticio
