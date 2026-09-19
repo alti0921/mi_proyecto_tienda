@@ -18,8 +18,8 @@ La siguiente tabla describe la correspondencia exacta entre los Requisitos Funci
 | **RF-INV-02** | Gestión de inventario, categorías y umbrales de stock mínimo | `productos` | `categoria` (`'canasta_basica'`, `'cesta_mixta'`, `'consumo_suntuario'`), `stock_minimo` ($\ge 0$). |
 | **RF-POS-02** | Registro de ventas con soporte para ítems de catálogo y ventas por monto global | `ventas`, `venta_detalle` | `venta_detalle.producto_id` es **NULLABLE** para registrar ítems sin ID de producto en ventas globales. |
 | **RF-POS-03** | Selección y validación del tipo de pago en punto de venta | `ventas` | `tipo_pago` con restricción CHECK: (`'efectivo'`, `'nequi'`, `'credito'`). |
-| **RF-CXC-01** | Registro inmutable en libro mayor de Cuentas por Cobrar (Cargos y Abonos) | `cuentas_por_cobrar` | Ledger Append-Only resguardado con **Triggers SQLite** e índice `idx_cxc_cliente_fecha`. |
-| **RF-CXC-02** | Gestión de perfil de clientes, saldos, líneas de crédito y nivel de vínculo | `clientes` | `limite_credito`, `saldo_actual`, `nivel_vinculo` (`'registro_completo'`, `'conocido_referido'`, `'solo_apodo'`). |
+| **RF-CXC-01** | Gestión de perfil de clientes, saldos, líneas de crédito y nivel de vínculo | `clientes` | `limite_credito`, `saldo_actual`, `nivel_vinculo` (`'registro_completo'`, `'conocido_referido'`, `'solo_apodo'`). |
+| **RF-CXC-02** | Registro inmutable en libro mayor de Cuentas por Cobrar (Cargos y Abonos) | `cuentas_por_cobrar` | Ledger Append-Only resguardado con **Triggers SQLite** e índice `idx_cxc_cliente_fecha`. |
 | **RF-SCR-01** | Historial, desgloses ($SW_1, SW_2, SW_3$) y evaluación de Scoring (0-100 pts) | `clientes`, `scoring_historial` | `score_crediticio` ($0\text{-}100$), `categoria_riesgo` (`'A'`, `'B'`, `'C'`, `'D'`), columnas de desglose `sw1`, `sw2`, `sw3`. |
 
 ---
