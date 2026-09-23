@@ -284,23 +284,30 @@ def registrar_snapshot(
     Registra una entrada inmutable de trazabilidad en scoring_historial (Append-Only).
     Actualiza además las columnas score_crediticio y categoria_riesgo en la tabla clientes.
     """
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO scoring_historial (
-            cliente_id, score_anterior, score_nuevo, categoria_anterior, categoria_nueva,
-            sw1, sw2, sw3, motivo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (cliente_id, score_ant, score_nuevo, cat_ant, cat_nueva, sw1, sw2, sw3, motivo))
-    
-    snapshot_id = cursor.lastrowid
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO scoring_historial (
+                cliente_id, score_anterior, score_nuevo, categoria_anterior, categoria_nueva,
+                sw1, sw2, sw3, motivo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (cliente_id, score_ant, score_nuevo, cat_ant, cat_nueva, sw1, sw2, sw3, motivo))
+        
+        snapshot_id = cursor.lastrowid
 
-    # Actualizar estado actual del cliente
-    cursor.execute("""
-        UPDATE clientes
-        SET score_crediticio = ?,
-            categoria_riesgo = ?
-        WHERE id = ?
-    """, (score_nuevo, cat_nueva, cliente_id))
+        # Actualizar estado actual del cliente
+        cursor.execute("""
+            UPDATE clientes
+            SET score_crediticio = ?,
+                categoria_riesgo = ?
+            WHERE id = ?
+        """, (score_nuevo, cat_nueva, cliente_id))
+
+        # Confirmación atómica de la transacción
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
 
     return ScoringHistorial(
         id=snapshot_id,
