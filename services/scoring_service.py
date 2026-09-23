@@ -2,6 +2,9 @@ import sqlite3
 from typing import Optional, Tuple, Dict, Any
 from models.scoring import ScoringHistorial
 
+# Constante global de negocio: Plazo estándar / Período de gracia en días
+PLAZO_ESTANDAR_DIAS: int = 8
+
 def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW1: Comportamiento de Pago Histórico (Peso W1 = 40%).
@@ -36,10 +39,10 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
         if dias_mora < 0:
             dias_mora = 0
 
-        # Evaluación V1.1: Días de Mora Activa con plazo de gracia de 8 días
-        if dias_mora <= 8:
-            v1_1 = 100.0  # Dentro del plazo de gracia de 8 días
-        elif 9 <= dias_mora <= 15:
+        # Evaluación V1.1: Días de Mora Activa con plazo de gracia
+        if dias_mora <= PLAZO_ESTANDAR_DIAS:
+            v1_1 = 100.0  # Dentro del plazo de gracia de 8 días (PLAZO_ESTANDAR_DIAS)
+        elif (PLAZO_ESTANDAR_DIAS + 1) <= dias_mora <= 15:
             v1_1 = 30.0   # Alerta preventiva / mora moderada
         else:
             v1_1 = 0.0    # Mora crítica (> 15 días)
@@ -209,7 +212,7 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
     """
     cursor = conn.cursor()
 
-    # 1. Desactivación de Cold-Start si existe mora activa mayor a 8 días
+    # 1. Desactivación de Cold-Start si existe mora activa mayor al plazo estándar (8 días)
     cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cliente_id,))
     cli_row = cursor.fetchone()
     saldo_actual = float(cli_row["saldo_actual"] or 0.0) if cli_row else 0.0
@@ -224,7 +227,7 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
         """, (cliente_id,))
         cxc_row = cursor.fetchone()
         dias_mora = cxc_row["dias_mora"] if (cxc_row and cxc_row["dias_mora"] is not None) else 0
-        if dias_mora > 8:
+        if dias_mora > PLAZO_ESTANDAR_DIAS:
             return {"es_cold_start": False}
 
     # 2. Contar ciclos de abono registrados
