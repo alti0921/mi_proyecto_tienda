@@ -8,7 +8,7 @@ PLAZO_ESTANDAR_DIAS: int = 8
 def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW1: Comportamiento de Pago Histórico (Peso W1 = 40%).
-    SW1 = 0.60 * V1.1 (días de mora activa con 8 días de gracia) + 0.40 * V1.2 (antigüedad de saldo).
+    SW1 = 0.60 * V1.1 (días de mora efectiva tras plazo de gracia de 8 días) + 0.40 * V1.2 (antigüedad de saldo).
     Devuelve un valor flotante en la escala 0 - 100.
     """
     cursor = conn.cursor()
@@ -24,10 +24,10 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
         v1_1 = 100.0
         v1_2 = 100.0
     else:
-        # Obtener la fecha del cargo pendiente más antiguo sin abonar totalmente
+        # Obtener los días transcurridos desde el cargo pendiente más antiguo sin abonar totalmente
         cursor.execute("""
             SELECT fecha_movimiento,
-                   CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_mora
+                   CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_transcurridos
             FROM cuentas_por_cobrar
             WHERE cliente_id = ? AND tipo_movimiento = 'cargo'
             ORDER BY fecha_movimiento ASC
@@ -35,24 +35,29 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
         """, (cliente_id,))
         cxc_row = cursor.fetchone()
         
-        dias_mora = cxc_row["dias_mora"] if (cxc_row and cxc_row["dias_mora"] is not None) else 0
-        if dias_mora < 0:
-            dias_mora = 0
+        dias_transcurridos = cxc_row["dias_transcurridos"] if (cxc_row and cxc_row["dias_transcurridos"] is not None) else 0
+        if dias_transcurridos < 0:
+            dias_transcurridos = 0
 
-        # Evaluación V1.1: Días de Mora Activa con plazo de gracia
-        if dias_mora <= PLAZO_ESTANDAR_DIAS:
-            v1_1 = 100.0  # Dentro del plazo de gracia de 8 días (PLAZO_ESTANDAR_DIAS)
-        elif (PLAZO_ESTANDAR_DIAS + 1) <= dias_mora <= 15:
-            v1_1 = 30.0   # Alerta preventiva / mora moderada
+        # Cálculo de mora efectiva descontando el plazo de gracia (8 días)
+        dias_mora_efectiva = max(0, dias_transcurridos - PLAZO_ESTANDAR_DIAS)
+
+        # Evaluación V1.1: 4 Niveles de Mora Efectiva según Matriz Calibrada
+        if dias_mora_efectiva == 0:
+            v1_1 = 100.0  # Al día o dentro del plazo de gracia (dias_transcurridos <= 8)
+        elif 1 <= dias_mora_efectiva <= 3:
+            v1_1 = 70.0   # Alerta preventiva (1 a 3 días de mora efectiva)
+        elif 4 <= dias_mora_efectiva <= 7:
+            v1_1 = 30.0   # Umbral de congelamiento (4 a 7 días de mora efectiva)
         else:
-            v1_1 = 0.0    # Mora crítica (> 15 días)
+            v1_1 = 0.0    # Mora crítica (> 7 días de mora efectiva)
 
         # Evaluación V1.2: Antigüedad de Saldo Pendiente
-        if dias_mora < 30:
+        if dias_transcurridos < 30:
             v1_2 = 100.0
-        elif 30 <= dias_mora <= 59:
+        elif 30 <= dias_transcurridos <= 59:
             v1_2 = 60.0
-        elif 60 <= dias_mora <= 90:
+        elif 60 <= dias_transcurridos <= 90:
             v1_2 = 20.0
         else:
             v1_2 = 0.0
@@ -206,7 +211,7 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
 def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:
     """
     Protocolo de Arranque en Frío (RF-SCR-02):
-    Evalúa a clientes sin historial previo (menos de 3 ciclos de pago oportunos registras en CxC).
+    Evalúa a clientes sin historial previo (menos de 3 ciclos de pago oportunos registrados en CxC).
     IMPORTANTE: Si el cliente presenta saldo activo con más de 8 días de mora,
     se desactiva el Cold-Start para ser evaluado inmediatamente por el cálculo general de mora.
     """
@@ -219,15 +224,15 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
 
     if saldo_actual > 0:
         cursor.execute("""
-            SELECT CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_mora
+            SELECT CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_transcurridos
             FROM cuentas_por_cobrar
             WHERE cliente_id = ? AND tipo_movimiento = 'cargo'
             ORDER BY fecha_movimiento ASC
             LIMIT 1
         """, (cliente_id,))
         cxc_row = cursor.fetchone()
-        dias_mora = cxc_row["dias_mora"] if (cxc_row and cxc_row["dias_mora"] is not None) else 0
-        if dias_mora > PLAZO_ESTANDAR_DIAS:
+        dias_transcurridos = cxc_row["dias_transcurridos"] if (cxc_row and cxc_row["dias_transcurridos"] is not None) else 0
+        if dias_transcurridos > PLAZO_ESTANDAR_DIAS:
             return {"es_cold_start": False}
 
     # 2. Contar ciclos de abono registrados
@@ -247,15 +252,16 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
     cli_info = cursor.fetchone()
     vinculo = (cli_info["nivel_vinculo"] or "").lower() if cli_info else "solo_apodo"
 
+    # Diferenciación de Categoría y Cupo en Cold-Start según nivel_vinculo
     if vinculo == "registro_completo":
         cupo_semilla = 50000.0
         cat_riesgo = "A"
     elif vinculo == "conocido_referido":
         cupo_semilla = 40000.0
         cat_riesgo = "B"
-    else:
+    else:  # 'solo_apodo' u otros
         cupo_semilla = 30000.0
-        cat_riesgo = "B"
+        cat_riesgo = "C"
 
     score_semilla = sw3
     decision_cold_start = {
