@@ -5,7 +5,7 @@ from models.scoring import ScoringHistorial
 def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW1: Comportamiento de Pago Histórico (Peso W1 = 40%).
-    SW1 = 0.60 * V1.1 (días de mora activa) + 0.40 * V1.2 (antigüedad de saldo).
+    SW1 = 0.60 * V1.1 (días de mora activa con 8 días de gracia) + 0.40 * V1.2 (antigüedad de saldo).
     Devuelve un valor flotante en la escala 0 - 100.
     """
     cursor = conn.cursor()
@@ -36,15 +36,13 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
         if dias_mora < 0:
             dias_mora = 0
 
-        # Evaluación V1.1: Días de Mora Activa
-        if dias_mora <= 3:
-            v1_1 = 100.0
-        elif 4 <= dias_mora <= 6:
-            v1_1 = 70.0
-        elif 7 <= dias_mora <= 10:
-            v1_1 = 30.0
+        # Evaluación V1.1: Días de Mora Activa con plazo de gracia de 8 días
+        if dias_mora <= 8:
+            v1_1 = 100.0  # Dentro del plazo de gracia de 8 días
+        elif 9 <= dias_mora <= 15:
+            v1_1 = 30.0   # Alerta preventiva / mora moderada
         else:
-            v1_1 = 0.0
+            v1_1 = 0.0    # Mora crítica (> 15 días)
 
         # Evaluación V1.2: Antigüedad de Saldo Pendiente
         if dias_mora < 30:
@@ -205,10 +203,31 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
 def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:
     """
     Protocolo de Arranque en Frío (RF-SCR-02):
-    Evalúa a clientes sin historial previo (menos de 3 ciclos de pago/transacciones registras en CxC).
-    Asigna un cupo semilla ($30.000 a $50.000 COP) a plazo de 15 días basándose en SW3.
+    Evalúa a clientes sin historial previo (menos de 3 ciclos de pago oportunos registras en CxC).
+    IMPORTANTE: Si el cliente presenta saldo activo con más de 8 días de mora,
+    se desactiva el Cold-Start para ser evaluado inmediatamente por el cálculo general de mora.
     """
     cursor = conn.cursor()
+
+    # 1. Desactivación de Cold-Start si existe mora activa mayor a 8 días
+    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cliente_id,))
+    cli_row = cursor.fetchone()
+    saldo_actual = float(cli_row["saldo_actual"] or 0.0) if cli_row else 0.0
+
+    if saldo_actual > 0:
+        cursor.execute("""
+            SELECT CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_mora
+            FROM cuentas_por_cobrar
+            WHERE cliente_id = ? AND tipo_movimiento = 'cargo'
+            ORDER BY fecha_movimiento ASC
+            LIMIT 1
+        """, (cliente_id,))
+        cxc_row = cursor.fetchone()
+        dias_mora = cxc_row["dias_mora"] if (cxc_row and cxc_row["dias_mora"] is not None) else 0
+        if dias_mora > 8:
+            return {"es_cold_start": False}
+
+    # 2. Contar ciclos de abono registrados
     cursor.execute("""
         SELECT COUNT(*) AS total_ciclos
         FROM cuentas_por_cobrar
@@ -222,18 +241,31 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
 
     sw3 = calcular_sw3(cliente_id, conn)
     cursor.execute("SELECT nivel_vinculo FROM clientes WHERE id = ?", (cliente_id,))
-    cli_row = cursor.fetchone()
-    vinculo = (cli_row["nivel_vinculo"] or "").lower() if cli_row else "solo_apodo"
+    cli_info = cursor.fetchone()
+    vinculo = (cli_info["nivel_vinculo"] or "").lower() if cli_info else "solo_apodo"
 
     if vinculo == "registro_completo":
         cupo_semilla = 50000.0
+        cat_riesgo = "A"
     elif vinculo == "conocido_referido":
         cupo_semilla = 40000.0
+        cat_riesgo = "B"
     else:
         cupo_semilla = 30000.0
+        cat_riesgo = "B"
 
     score_semilla = sw3
-    decision = aplicar_matriz_decision(score_semilla)
+    decision_cold_start = {
+        "categoria_riesgo": cat_riesgo,
+        "nivel_riesgo": "Cold-Start Semilla",
+        "aprobado": True,
+        "accion": f"Asignación de cupo semilla conservador (${cupo_semilla:,.0f} COP) a plazo máximo de 15 días.",
+        "sugerencia_cupo": "Cupo Semilla",
+        "factor_cupo": 1.00,
+        "congelado": False,
+        "bloqueado": False,
+        "abono_minimo_pct": 0.0
+    }
 
     return {
         "es_cold_start": True,
@@ -241,7 +273,7 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
         "score_semilla": score_semilla,
         "cupo_semilla": cupo_semilla,
         "plazo_dias": 15,
-        "decision": decision
+        "decision": decision_cold_start
     }
 
 
@@ -282,8 +314,11 @@ def registrar_snapshot(
 ) -> ScoringHistorial:
     """
     Registra una entrada inmutable de trazabilidad en scoring_historial (Append-Only).
-    Actualiza además las columnas score_crediticio y categoria_riesgo en la tabla clientes.
+    Garantiza el casteo explícito a entero (int) de los puntajes antes de persistir en SQLite.
     """
+    score_ant_int = int(round(score_ant))
+    score_nuevo_int = int(round(score_nuevo))
+
     try:
         cursor = conn.cursor()
         cursor.execute("""
@@ -291,17 +326,17 @@ def registrar_snapshot(
                 cliente_id, score_anterior, score_nuevo, categoria_anterior, categoria_nueva,
                 sw1, sw2, sw3, motivo
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (cliente_id, score_ant, score_nuevo, cat_ant, cat_nueva, sw1, sw2, sw3, motivo))
+        """, (cliente_id, score_ant_int, score_nuevo_int, cat_ant, cat_nueva, sw1, sw2, sw3, motivo))
         
         snapshot_id = cursor.lastrowid
 
-        # Actualizar estado actual del cliente
+        # Actualizar estado actual del cliente asegurando tipo entero
         cursor.execute("""
             UPDATE clientes
             SET score_crediticio = ?,
                 categoria_riesgo = ?
             WHERE id = ?
-        """, (score_nuevo, cat_nueva, cliente_id))
+        """, (score_nuevo_int, cat_nueva, cliente_id))
 
         # Confirmación atómica de la transacción
         conn.commit()
@@ -315,8 +350,8 @@ def registrar_snapshot(
         sw1=sw1,
         sw2=sw2,
         sw3=sw3,
-        score_anterior=score_ant,
-        score_nuevo=score_nuevo,
+        score_anterior=score_ant_int,
+        score_nuevo=score_nuevo_int,
         categoria_anterior=cat_ant,
         categoria_nueva=cat_nueva,
         motivo=motivo
