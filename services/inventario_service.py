@@ -7,7 +7,7 @@ CATEGORIAS_VALIDAS = ("canasta_basica", "cesta_mixta", "consumo_suntuario")
 
 
 def _row_to_producto(row: sqlite3.Row) -> Producto:
-    """Convierte una fila de sqlite3.Row al dataclass Producto."""
+    """Convierte una fila de sqlite3.Row al dataclass Producto con stock y stock_minimo como int."""
     return Producto(
         id=row["id"],
         codigo_barras=row["codigo_barras"],
@@ -15,8 +15,8 @@ def _row_to_producto(row: sqlite3.Row) -> Producto:
         categoria=row["categoria"],
         precio_venta=float(row["precio_venta"]),
         costo=float(row["costo"]),
-        stock=float(row["stock"]),
-        stock_minimo=float(row["stock_minimo"]),
+        stock=int(row["stock"]),
+        stock_minimo=int(row["stock_minimo"]),
         activo=bool(row["activo"]),
     )
 
@@ -61,10 +61,12 @@ def crear_producto(
 ) -> Producto:
     """
     Crea y persiste un nuevo producto en la base de datos (RF-INV-01).
-    Valida reglas de negocio antes de insertar.
-    Lanza ValueError por campos inválidos o IntegrityError por código de barras duplicado.
+    Aplica política de redondeo a entero consistente en BD y en el dataclass retornado.
     """
     _validar_producto(nombre, categoria, precio_venta, costo, stock, stock_minimo)
+
+    stock_final = int(round(stock))
+    stock_min_final = int(round(stock_minimo))
 
     # Verificar duplicado de código de barras manualmente para dar mensaje claro
     if codigo_barras is not None:
@@ -84,7 +86,7 @@ def crear_producto(
             INSERT INTO productos (codigo_barras, nombre, categoria, precio_venta, costo, stock, stock_minimo, activo)
             VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             """,
-            (codigo_barras, nombre.strip(), categoria, precio_venta, costo, int(stock), int(stock_minimo)),
+            (codigo_barras, nombre.strip(), categoria, precio_venta, costo, stock_final, stock_min_final),
         )
         nuevo_id = cursor.lastrowid
         conn.commit()
@@ -99,8 +101,8 @@ def crear_producto(
         categoria=categoria,
         precio_venta=precio_venta,
         costo=costo,
-        stock=stock,
-        stock_minimo=stock_minimo,
+        stock=stock_final,
+        stock_minimo=stock_min_final,
         activo=True,
     )
 
@@ -155,7 +157,7 @@ def actualizar_producto(
 ) -> Producto:
     """
     Actualiza los campos del catálogo de un producto (RF-INV-01).
-    Solo modifica los campos proporcionados (actualización parcial).
+    Asegura consistencia de stock_minimo entero tanto en BD como en memoria.
     No modifica el stock directamente — usa ajustar_stock() para eso.
     """
     cursor = conn.cursor()
@@ -173,6 +175,7 @@ def actualizar_producto(
     nuevo_codigo = codigo_barras if codigo_barras is not None else row["codigo_barras"]
 
     _validar_producto(nuevo_nombre, nueva_categoria, nuevo_precio, nuevo_costo, 0, nuevo_stock_minimo)
+    nuevo_stock_min_int = int(round(nuevo_stock_minimo))
 
     # Verificar unicidad del nuevo código de barras si cambió
     if codigo_barras is not None and codigo_barras != row["codigo_barras"]:
@@ -194,7 +197,7 @@ def actualizar_producto(
             WHERE id = ?
             """,
             (nuevo_nombre, nueva_categoria, nuevo_precio, nuevo_costo,
-             int(nuevo_stock_minimo), nuevo_codigo, producto_id),
+             nuevo_stock_min_int, nuevo_codigo, producto_id),
         )
         conn.commit()
     except Exception as e:
@@ -208,8 +211,8 @@ def actualizar_producto(
         categoria=nueva_categoria,
         precio_venta=nuevo_precio,
         costo=nuevo_costo,
-        stock=float(row["stock"]),
-        stock_minimo=nuevo_stock_minimo,
+        stock=int(row["stock"]),
+        stock_minimo=nuevo_stock_min_int,
         activo=True,
     )
 
@@ -221,8 +224,8 @@ def ajustar_stock(
 ) -> Producto:
     """
     Ajusta el stock de un producto sumando o restando una cantidad.
-    Cantidad positiva = entrada (recepción de mercancía).
-    Cantidad negativa = salida (despacho por venta o devolución).
+    Calcula stock_final = int(round(nuevo_stock)) una sola vez,
+    usando ese mismo valor tanto en el UPDATE SQL como en el Producto retornado.
     Debe llamarse siempre dentro de la misma transacción que la venta.
     """
     cursor = conn.cursor()
@@ -234,7 +237,8 @@ def ajustar_stock(
         raise ValueError(f"Producto ID {producto_id} no encontrado o inactivo.")
 
     nuevo_stock = float(row["stock"]) + cantidad
-    if nuevo_stock < 0:
+    stock_final = int(round(nuevo_stock))
+    if stock_final < 0:
         raise ValueError(
             f"Stock insuficiente para '{row['nombre']}'. "
             f"Disponible: {int(row['stock'])}, solicitado: {abs(int(cantidad))}."
@@ -242,7 +246,7 @@ def ajustar_stock(
 
     cursor.execute(
         "UPDATE productos SET stock = ? WHERE id = ?",
-        (int(nuevo_stock), producto_id),
+        (stock_final, producto_id),
     )
     return Producto(
         id=producto_id,
@@ -251,8 +255,8 @@ def ajustar_stock(
         categoria=row["categoria"],
         precio_venta=float(row["precio_venta"]),
         costo=float(row["costo"]),
-        stock=nuevo_stock,
-        stock_minimo=float(row["stock_minimo"]),
+        stock=stock_final,
+        stock_minimo=int(row["stock_minimo"]),
         activo=True,
     )
 

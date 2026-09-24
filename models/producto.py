@@ -9,8 +9,8 @@ class Producto:
     categoria: str = "canasta_basica"  # 'canasta_basica', 'cesta_mixta', 'consumo_suntuario'
     precio_venta: float = 0.0
     costo: float = 0.0
-    stock: float = 0.0
-    stock_minimo: float = 5.0
+    stock: int = 0
+    stock_minimo: int = 5
     activo: bool = True
 
     @property

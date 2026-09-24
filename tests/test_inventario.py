@@ -49,8 +49,10 @@ def test_crear_producto_exitoso(db_conn):
     assert prod.categoria == "canasta_basica"
     assert prod.precio_venta == 4.50
     assert prod.costo == 3.20
-    assert prod.stock == 20.0
-    assert prod.stock_minimo == 5.0
+    assert prod.stock == 20
+    assert isinstance(prod.stock, int)
+    assert prod.stock_minimo == 5
+    assert isinstance(prod.stock_minimo, int)
     assert prod.activo is True
     assert prod.codigo_barras == "7701234567890"
 
@@ -123,6 +125,7 @@ def test_obtener_producto_por_id_y_codigo(db_conn):
     assert por_id is not None
     assert por_id.id == creado.id
     assert por_id.nombre == "Atún en Aceite"
+    assert isinstance(por_id.stock, int)
 
     # Consulta por Código de Barras
     por_codigo = obtener_producto_por_codigo("7705555555555", db_conn)
@@ -157,9 +160,11 @@ def test_actualizar_producto(db_conn):
 
     assert actualizado.precio_venta == 3.00
     assert actualizado.costo == 2.00
-    assert actualizado.stock_minimo == 6.0
+    assert actualizado.stock_minimo == 6
+    assert isinstance(actualizado.stock_minimo, int)
     assert actualizado.nombre == "Jugo de Naranja 500ml"  # Sin cambios
-    assert actualizado.stock == 12.0  # El stock no se toca en actualizar_producto
+    assert actualizado.stock == 12  # El stock no se toca en actualizar_producto
+    assert isinstance(actualizado.stock, int)
 
 
 def test_actualizar_producto_codigo_duplicado(db_conn):
@@ -185,16 +190,59 @@ def test_ajustar_stock(db_conn):
     # Entrada de inventario (+5)
     ajustado = ajustar_stock(prod.id, 5.0, db_conn)
     db_conn.commit()
-    assert ajustado.stock == 15.0
+    assert ajustado.stock == 15
+    assert isinstance(ajustado.stock, int)
 
     # Salida por venta (-3)
     ajustado = ajustar_stock(prod.id, -3.0, db_conn)
     db_conn.commit()
-    assert ajustado.stock == 12.0
+    assert ajustado.stock == 12
+    assert isinstance(ajustado.stock, int)
 
     # Salida mayor al disponible -> Error de stock insuficiente
     with pytest.raises(ValueError, match="Stock insuficiente"):
         ajustar_stock(prod.id, -20.0, db_conn)
+
+
+def test_ajustar_stock_fraccionario_consistencia_bd_y_dataclass(db_conn):
+    """
+    Verifica que al ajustar stock con cantidades fraccionarias:
+    1. Se aplique el redondeo int(round(...)) de forma uniforme.
+    2. El objeto retornado en memoria coincida exactamente con el valor persistido en SQLite.
+    """
+    prod = crear_producto(
+        nombre="Queso Costeño por Peso",
+        categoria="canasta_basica",
+        precio_venta=12.0,
+        costo=8.0,
+        conn=db_conn,
+        stock=10.0,
+    )
+    cursor = db_conn.cursor()
+
+    # Primer ajuste fraccionario: 10 - 0.5 = 9.5 -> round = 10 (o 9.5 round par = 10 / round(9.5) = 10)
+    # En Python: round(9.5) == 10, pero 10 + (-0.6) = 9.4 -> 9
+    # Probemos con -0.5:
+    prod_ajustado_1 = ajustar_stock(prod.id, -0.5, db_conn)
+    db_conn.commit()
+
+    cursor.execute("SELECT stock FROM productos WHERE id = ?", (prod.id,))
+    stock_bd_1 = cursor.fetchone()["stock"]
+
+    assert isinstance(prod_ajustado_1.stock, int)
+    assert isinstance(stock_bd_1, int)
+    assert prod_ajustado_1.stock == stock_bd_1
+
+    # Segundo ajuste fraccionario: stock_bd_1 - 0.5
+    prod_ajustado_2 = ajustar_stock(prod.id, -0.5, db_conn)
+    db_conn.commit()
+
+    cursor.execute("SELECT stock FROM productos WHERE id = ?", (prod.id,))
+    stock_bd_2 = cursor.fetchone()["stock"]
+
+    assert isinstance(prod_ajustado_2.stock, int)
+    assert isinstance(stock_bd_2, int)
+    assert prod_ajustado_2.stock == stock_bd_2
 
 
 def test_desactivar_producto_baja_logica(db_conn):
@@ -287,5 +335,6 @@ def test_producto_propiedades_calculadas(db_conn):
 
     # Si ajustamos stock a 10
     prod_ajustado = ajustar_stock(prod.id, 6.0, db_conn)
-    assert prod_ajustado.stock == 10.0
+    assert prod_ajustado.stock == 10
+    assert isinstance(prod_ajustado.stock, int)
     assert prod_ajustado.alerta_stock_bajo is False
