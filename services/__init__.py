@@ -7,6 +7,16 @@ from services.scoring_service import (
     evaluar_cold_start,
     registrar_snapshot,
 )
+from services.inventario_service import (
+    crear_producto,
+    obtener_producto,
+    obtener_producto_por_codigo,
+    listar_productos,
+    actualizar_producto,
+    ajustar_stock,
+    desactivar_producto,
+    listar_alertas_stock,
+)
 
 __all__ = [
     "calcular_sw1",
@@ -16,4 +26,12 @@ __all__ = [
     "aplicar_matriz_decision",
     "evaluar_cold_start",
     "registrar_snapshot",
+    "crear_producto",
+    "obtener_producto",
+    "obtener_producto_por_codigo",
+    "listar_productos",
+    "actualizar_producto",
+    "ajustar_stock",
+    "desactivar_producto",
+    "listar_alertas_stock",
 ]
