@@ -1,3 +1,4 @@
+import math
 import sqlite3
 from typing import Optional, List
 from models.producto import Producto
@@ -224,8 +225,10 @@ def ajustar_stock(
 ) -> Producto:
     """
     Ajusta el stock de un producto sumando o restando una cantidad.
-    Calcula stock_final = int(round(nuevo_stock)) una sola vez,
-    usando ese mismo valor tanto en el UPDATE SQL como en el Producto retornado.
+    Aplica redondeo direccional conservador (Opción 1):
+    - Venta / Salida (cantidad < 0): math.floor(nuevo_stock) para no sobreestimar inventario.
+    - Entrada (cantidad >= 0): math.ceil(nuevo_stock).
+    Valida que stock_final no sea negativo.
     Debe llamarse siempre dentro de la misma transacción que la venta.
     """
     cursor = conn.cursor()
@@ -237,7 +240,13 @@ def ajustar_stock(
         raise ValueError(f"Producto ID {producto_id} no encontrado o inactivo.")
 
     nuevo_stock = float(row["stock"]) + cantidad
-    stock_final = int(round(nuevo_stock))
+    if cantidad < 0:
+        # Venta / Salida: principio de prudencia para no sobreestimar inventario
+        stock_final = math.floor(nuevo_stock)
+    else:
+        # Entrada de mercancía
+        stock_final = math.ceil(nuevo_stock)
+
     if stock_final < 0:
         raise ValueError(
             f"Stock insuficiente para '{row['nombre']}'. "

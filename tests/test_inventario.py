@@ -206,9 +206,11 @@ def test_ajustar_stock(db_conn):
 
 def test_ajustar_stock_fraccionario_consistencia_bd_y_dataclass(db_conn):
     """
-    Verifica que al ajustar stock con cantidades fraccionarias:
-    1. Se aplique el redondeo int(round(...)) de forma uniforme.
-    2. El objeto retornado en memoria coincida exactamente con el valor persistido en SQLite.
+    Verifica que bajo la política de redondeo direccional conservador (floor en ventas):
+    1. El stock descienda de forma estrictamente monótona tras ventas fraccionarias consecutivas (-0.5).
+    2. No se congele por redondeo bancario (10 -> 9 -> 8 -> 7 -> 6).
+    3. En cada paso el valor en memoria coincida exactamente con lo persistido en SQLite.
+    4. Al final el stock sea menor que el inicial.
     """
     prod = crear_producto(
         nombre="Queso Costeño por Peso",
@@ -220,29 +222,27 @@ def test_ajustar_stock_fraccionario_consistencia_bd_y_dataclass(db_conn):
     )
     cursor = db_conn.cursor()
 
-    # Primer ajuste fraccionario: 10 - 0.5 = 9.5 -> round = 10 (o 9.5 round par = 10 / round(9.5) = 10)
-    # En Python: round(9.5) == 10, pero 10 + (-0.6) = 9.4 -> 9
-    # Probemos con -0.5:
-    prod_ajustado_1 = ajustar_stock(prod.id, -0.5, db_conn)
-    db_conn.commit()
+    stock_esperado = 10
+    # 4 ventas consecutivas de -0.5
+    for i in range(4):
+        # Cada venta de -0.5 debe restar efectivamente 1 unidad bajo math.floor(stock - 0.5)
+        stock_esperado -= 1
+        prod = ajustar_stock(prod.id, -0.5, db_conn)
+        db_conn.commit()
 
-    cursor.execute("SELECT stock FROM productos WHERE id = ?", (prod.id,))
-    stock_bd_1 = cursor.fetchone()["stock"]
+        cursor.execute("SELECT stock FROM productos WHERE id = ?", (prod.id,))
+        stock_bd = cursor.fetchone()["stock"]
 
-    assert isinstance(prod_ajustado_1.stock, int)
-    assert isinstance(stock_bd_1, int)
-    assert prod_ajustado_1.stock == stock_bd_1
+        # Validaciones por iteración
+        assert prod.stock == stock_esperado, f"En iteración {i+1} el stock en dataclass debió ser {stock_esperado}, pero fue {prod.stock}"
+        assert stock_bd == stock_esperado, f"En iteración {i+1} el stock en BD debió ser {stock_esperado}, pero fue {stock_bd}"
+        assert prod.stock == stock_bd
+        assert isinstance(prod.stock, int)
+        assert isinstance(stock_bd, int)
 
-    # Segundo ajuste fraccionario: stock_bd_1 - 0.5
-    prod_ajustado_2 = ajustar_stock(prod.id, -0.5, db_conn)
-    db_conn.commit()
-
-    cursor.execute("SELECT stock FROM productos WHERE id = ?", (prod.id,))
-    stock_bd_2 = cursor.fetchone()["stock"]
-
-    assert isinstance(prod_ajustado_2.stock, int)
-    assert isinstance(stock_bd_2, int)
-    assert prod_ajustado_2.stock == stock_bd_2
+    # Verificación final
+    assert prod.stock == 6
+    assert prod.stock < 10
 
 
 def test_desactivar_producto_baja_logica(db_conn):
