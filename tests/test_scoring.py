@@ -2,6 +2,7 @@ import sqlite3
 import pytest
 import os
 from services import (
+    calcular_v1_1,
     calcular_score,
     calcular_sw1,
     calcular_sw2,
@@ -285,15 +286,15 @@ def test_v1_1_mora_efectiva_bordes(db_conn):
 
         sw1_calculado = calcular_sw1(cid, db_conn)
 
-        # SW1 = 0.60 * V1.1 + 0.40 * 100.0  =>  V1.1 = (SW1 - 40.0) / 0.60
-        v1_1_derivado = round((sw1_calculado - 40.0) / 0.60, 1)
-
-        assert sw1_calculado == sw1_esp, (
-            f"Fallo en {dias_trans} días (mora efectiva {mora_efectiva}): "
-            f"SW1 esperado {sw1_esp}, obtenido {sw1_calculado}"
+        # 1. Verificación directa de V1.1 sin álgebra inversa
+        assert calcular_v1_1(mora_efectiva) == v1_1_esp, (
+            f"Fallo en {mora_efectiva} días de mora: "
+            f"V1.1 esperado {v1_1_esp}, obtenido {calcular_v1_1(mora_efectiva)}"
         )
-        assert v1_1_derivado == v1_1_esp, (
-            f"Fallo en {dias_trans} días (mora efectiva {mora_efectiva}): "
-            f"V1.1 esperado {v1_1_esp}, derivado {v1_1_derivado}"
+
+        # 2. Validación de integración en SW1
+        assert sw1_calculado == sw1_esp, (
+            f"Fallo en integración SW1 para {dias_trans} días (mora efectiva {mora_efectiva}): "
+            f"SW1 esperado {sw1_esp}, obtenido {sw1_calculado}"
         )
 

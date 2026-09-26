@@ -5,6 +5,24 @@ from models.scoring import ScoringHistorial
 # Constante global de negocio: Plazo estándar / Período de gracia en días
 PLAZO_ESTANDAR_DIAS: int = 8
 
+def calcular_v1_1(dias_mora_efectiva: int) -> float:
+    """
+    Calcula el puntaje de V1.1 (0 a 100) según los 4 niveles empíricos de P-Q9:
+    - 0 a 3 días: 100.0 pts (al día / tolerancia leve)
+    - 4 a 6 días: 70.0 pts (alerta preventiva)
+    - 7 a 10 días: 30.0 pts (umbral de congelamiento según 66.7% de tenderos)
+    - >10 días: 0.0 pts (mora crítica)
+    """
+    if 0 <= dias_mora_efectiva <= 3:
+        return 100.0
+    elif 4 <= dias_mora_efectiva <= 6:
+        return 70.0
+    elif 7 <= dias_mora_efectiva <= 10:
+        return 30.0
+    else:
+        return 0.0
+
+
 def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW1: Comportamiento de Pago Histórico (Peso W1 = 40%).
@@ -43,14 +61,7 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
         dias_mora_efectiva = max(0, dias_transcurridos - PLAZO_ESTANDAR_DIAS)
 
         # Evaluación V1.1: 4 Niveles de Mora Efectiva según P-Q9
-        if 0 <= dias_mora_efectiva <= 3:
-            v1_1 = 100.0  # 0 - 3 días (Al día / mora mínima)
-        elif 4 <= dias_mora_efectiva <= 6:
-            v1_1 = 70.0   # 4 - 6 días (Alerta preventiva)
-        elif 7 <= dias_mora_efectiva <= 10:
-            v1_1 = 30.0   # 7 - 10 días: Umbral de congelamiento según P-Q9 (66.7% de tenderos)
-        else:
-            v1_1 = 0.0    # Mayor a 10 días: Mora crítica
+        v1_1 = calcular_v1_1(dias_mora_efectiva)
 
         # Evaluación V1.2: Antigüedad de Saldo Pendiente
         if dias_transcurridos < 30:

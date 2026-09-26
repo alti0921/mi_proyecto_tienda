@@ -1,4 +1,5 @@
 from services.scoring_service import (
+    calcular_v1_1,
     calcular_sw1,
     calcular_sw2,
     calcular_sw3,
@@ -19,6 +20,7 @@ from services.inventario_service import (
 )
 
 __all__ = [
+    "calcular_v1_1",
     "calcular_sw1",
     "calcular_sw2",
     "calcular_sw3",
