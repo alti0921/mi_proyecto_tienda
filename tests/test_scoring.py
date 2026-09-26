@@ -298,3 +298,33 @@ def test_v1_1_mora_efectiva_bordes(db_conn):
             f"SW1 esperado {sw1_esp}, obtenido {sw1_calculado}"
         )
 
+
+def test_venta_credito_requiere_cliente_integrity_error(db_conn):
+    """
+    Verifica que la restricción CHECK (tipo_pago != 'credito' OR cliente_id IS NOT NULL)
+    en la tabla ventas dispare un sqlite3.IntegrityError si se intenta registrar una
+    venta a crédito sin cliente asociado (cliente_id = NULL).
+    """
+    cursor = db_conn.cursor()
+
+    # 1. Intento inválido: crédito sin cliente -> Debe fallar con IntegrityError
+    with pytest.raises(sqlite3.IntegrityError):
+        cursor.execute("""
+            INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total)
+            VALUES (1, NULL, 'credito', 5000.0)
+        """)
+
+    # 2. Ventas válidas: efectivo sin cliente y crédito con cliente deben operar con normalidad
+    cursor.execute("""
+        INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total)
+        VALUES (1, NULL, 'efectivo', 3000.0)
+    """)
+    assert cursor.lastrowid is not None
+
+    cursor.execute("""
+        INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total)
+        VALUES (1, 1, 'credito', 4000.0)
+    """)
+    assert cursor.lastrowid is not None
+
+

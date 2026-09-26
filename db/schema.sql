@@ -65,7 +65,8 @@ CREATE TABLE ventas (
     monto_pagado REAL NOT NULL DEFAULT 0.0 CHECK (monto_pagado >= 0),
     fecha_venta DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
-    FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+    FOREIGN KEY (cliente_id) REFERENCES clientes(id),
+    CHECK (tipo_pago != 'credito' OR cliente_id IS NOT NULL)
 );
 
 -- 5. Tabla: venta_detalle
