@@ -249,3 +249,51 @@ def test_registrar_snapshot_atomicidad(db_conn):
     assert isinstance(cli_row["score_crediticio"], int)
     assert cli_row["score_crediticio"] == 93
     assert cli_row["categoria_riesgo"] == "A"
+
+
+def test_v1_1_mora_efectiva_bordes(db_conn):
+    """
+    Prueba de bordes específicos para la variable V1.1 (Mora Efectiva según P-Q9):
+    Dado que días_mora_efectiva = max(0, días_transcurridos - 8) y V1.2 = 100 (< 30 días):
+    - Días mora efectiva = 6 (14 días transcurridos - 8) -> V1.1 = 70.0 pts (SW1 = 82.0).
+    - Días mora efectiva = 7 (15 días transcurridos - 8) -> V1.1 = 30.0 pts (SW1 = 58.0).
+    - Días mora efectiva = 10 (18 días transcurridos - 8) -> V1.1 = 30.0 pts (SW1 = 58.0).
+    - Días mora efectiva = 11 (19 días transcurridos - 8) -> V1.1 = 0.0 pts (SW1 = 40.0).
+    """
+    cursor = db_conn.cursor()
+
+    casos_borde = [
+        # (dias_transcurridos, mora_efectiva_esperada, v1_1_esperado, sw1_esperado)
+        (14, 6, 70.0, 82.0),
+        (15, 7, 30.0, 58.0),
+        (18, 10, 30.0, 58.0),
+        (19, 11, 0.0, 40.0),
+    ]
+
+    for dias_trans, mora_efectiva, v1_1_esp, sw1_esp in casos_borde:
+        cursor.execute("""
+            INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+            VALUES (?, 1000.0, 200.0, 60, 'B', 'conocido_referido')
+        """, (f"Cliente Borde {dias_trans}d",))
+        cid = cursor.lastrowid
+
+        cursor.execute(f"""
+            INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+            VALUES (?, 'cargo', 200.0, 200.0, datetime('now', '-{dias_trans} days'))
+        """, (cid,))
+        db_conn.commit()
+
+        sw1_calculado = calcular_sw1(cid, db_conn)
+
+        # SW1 = 0.60 * V1.1 + 0.40 * 100.0  =>  V1.1 = (SW1 - 40.0) / 0.60
+        v1_1_derivado = round((sw1_calculado - 40.0) / 0.60, 1)
+
+        assert sw1_calculado == sw1_esp, (
+            f"Fallo en {dias_trans} días (mora efectiva {mora_efectiva}): "
+            f"SW1 esperado {sw1_esp}, obtenido {sw1_calculado}"
+        )
+        assert v1_1_derivado == v1_1_esp, (
+            f"Fallo en {dias_trans} días (mora efectiva {mora_efectiva}): "
+            f"V1.1 esperado {v1_1_esp}, derivado {v1_1_derivado}"
+        )
+

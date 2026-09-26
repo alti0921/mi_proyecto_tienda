@@ -42,15 +42,15 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
         # Cálculo de mora efectiva descontando el plazo de gracia (8 días)
         dias_mora_efectiva = max(0, dias_transcurridos - PLAZO_ESTANDAR_DIAS)
 
-        # Evaluación V1.1: 4 Niveles de Mora Efectiva según Matriz Calibrada
-        if dias_mora_efectiva == 0:
-            v1_1 = 100.0  # Al día o dentro del plazo de gracia (dias_transcurridos <= 8)
-        elif 1 <= dias_mora_efectiva <= 3:
-            v1_1 = 70.0   # Alerta preventiva (1 a 3 días de mora efectiva)
-        elif 4 <= dias_mora_efectiva <= 7:
-            v1_1 = 30.0   # Umbral de congelamiento (4 a 7 días de mora efectiva)
+        # Evaluación V1.1: 4 Niveles de Mora Efectiva según P-Q9
+        if 0 <= dias_mora_efectiva <= 3:
+            v1_1 = 100.0  # 0 - 3 días (Al día / mora mínima)
+        elif 4 <= dias_mora_efectiva <= 6:
+            v1_1 = 70.0   # 4 - 6 días (Alerta preventiva)
+        elif 7 <= dias_mora_efectiva <= 10:
+            v1_1 = 30.0   # 7 - 10 días: Umbral de congelamiento según P-Q9 (66.7% de tenderos)
         else:
-            v1_1 = 0.0    # Mora crítica (> 7 días de mora efectiva)
+            v1_1 = 0.0    # Mayor a 10 días: Mora crítica
 
         # Evaluación V1.2: Antigüedad de Saldo Pendiente
         if dias_transcurridos < 30:
