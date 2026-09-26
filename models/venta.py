@@ -13,7 +13,7 @@ class Venta:
 
     @property
     def monto_cambio(self) -> float:
-        """Calcula el cambio a devolver en transacciones de contado."""
-        if self.tipo_pago in ("efectivo", "nequi"):
+        """Calcula el cambio a devolver exclusivamente en transacciones en efectivo."""
+        if self.tipo_pago == "efectivo":
             return max(0.0, round(self.monto_pagado - self.total, 2))
         return 0.0
