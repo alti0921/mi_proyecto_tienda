@@ -225,11 +225,15 @@ def ajustar_stock(
 ) -> Producto:
     """
     Ajusta el stock de un producto sumando o restando una cantidad.
-    Aplica redondeo direccional conservador (Opción 1):
-    - Venta / Salida (cantidad < 0): math.floor(nuevo_stock) para no sobreestimar inventario.
-    - Entrada (cantidad >= 0): math.ceil(nuevo_stock).
-    Valida que stock_final no sea negativo.
-    Debe llamarse siempre dentro de la misma transacción que la venta.
+
+    Reglas operativas y política de redondeo:
+    - Salidas / Ventas (cantidad < 0): Aplica math.floor(nuevo_stock)
+      bajo el principio de prudencia contable para evitar la sobreestimación
+      de existencias en ventas a granel.
+    - Entradas / Recepción (cantidad >= 0): Diseñado asumiendo el ingreso
+      en unidades enteras (empaques/cajas cerradas) según RS-05 del ERS.
+      El ingreso de cantidades fraccionarias en recepciones constituye una
+      limitación conocida no soportada en el flujo regular.
     """
     cursor = conn.cursor()
     cursor.execute(
