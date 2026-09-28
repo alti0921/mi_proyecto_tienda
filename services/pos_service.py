@@ -185,6 +185,15 @@ def registrar_venta(
         if not cliente_id:
             raise ValueError("Las ventas a crédito requieren asociar un cliente obligatorio (cliente_id).")
 
+        if monto_pagado < 0:
+            raise ValueError(f"El monto pagado no puede ser negativo ({monto_pagado}).")
+
+        if monto_pagado >= total:
+            raise ValueError(
+                f"El monto pagado ({monto_pagado}) cubre la totalidad de la venta ({total}). "
+                "Para pagos completos utilice un tipo de pago de contado (efectivo o nequi)."
+            )
+
         cursor = conn.cursor()
         cursor.execute("SELECT id, nombre, saldo_actual, limite_credito, activo FROM clientes WHERE id = ?", (cliente_id,))
         cli_row = cursor.fetchone()
@@ -224,13 +233,12 @@ def registrar_venta(
                 )
 
         # 2. Insertar cabecera de venta
-        monto_pagado_final = monto_pagado if tipo_pago != "credito" else 0.0
         cursor.execute(
             """
             INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total, monto_pagado)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (usuario_id, cliente_id, tipo_pago, total, monto_pagado_final),
+            (usuario_id, cliente_id, tipo_pago, total, monto_pagado),
         )
         venta_id = cursor.lastrowid
 
@@ -246,10 +254,12 @@ def registrar_venta(
 
         # 4. Si es crédito: registrar cargo en CxC y snapshot en scoring_historial
         if tipo_pago == "credito":
-            # Registrar cargo sin commit interno
+            monto_a_fiar = round(total - monto_pagado, 2)
+
+            # Registrar cargo sin commit interno por el saldo neto financiado
             cxc_service.registrar_cargo(
                 cliente_id=cliente_id,
-                monto=total,
+                monto=monto_a_fiar,
                 conn=conn,
                 venta_id=venta_id,
                 descripcion=f"Venta a crédito #{venta_id}",
@@ -294,6 +304,6 @@ def registrar_venta(
         cliente_id=cliente_id,
         tipo_pago=tipo_pago,
         total=total,
-        monto_pagado=monto_pagado_final,
+        monto_pagado=monto_pagado,
         fecha_venta=fecha_venta,
     )

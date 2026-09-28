@@ -414,3 +414,78 @@ def test_atomicidad_post_cargo_fallo_en_snapshot(db_conn, monkeypatch):
 
     cursor.execute("SELECT COUNT(*) AS total FROM scoring_historial")
     assert cursor.fetchone()["total"] == 0
+
+
+def test_venta_credito_con_abono_inicial_registra_solo_saldo_pendiente(db_conn):
+    """
+    Verifica que en una venta a crédito con abono inicial en efectivo:
+    - Se valida 0 <= monto_pagado < total.
+    - Se rechaza si monto_pagado >= total (debe ser contado).
+    - Se descuenta el stock completo de los productos.
+    - La venta registra total completo y monto_pagado entregado.
+    - CxC registra como cargo ÚNICAMENTE el saldo neto financiado (total - monto_pagado).
+    - El saldo_actual del cliente se incrementa solo por el monto neto financiado.
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT stock FROM productos WHERE id = 1")
+    stock_inicial = cursor.fetchone()["stock"]  # 100
+
+    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = 1")
+    saldo_inicial = cursor.fetchone()["saldo_actual"]  # 0.0
+
+    # Total de la venta = 4 * 25.0 = 100.0
+    items = [LineaVentaInput(producto_id=1, cantidad=4.0, precio_unitario=25.0)]
+
+    # 1. Rechazo si monto_pagado < 0
+    with pytest.raises(ValueError, match="El monto pagado no puede ser negativo"):
+        registrar_venta(
+            usuario_id=1,
+            tipo_pago="credito",
+            items=items,
+            conn=db_conn,
+            cliente_id=1,
+            monto_pagado=-10.0,
+        )
+
+    # 2. Rechazo si monto_pagado >= total (cubre toda la venta, debe ser contado)
+    with pytest.raises(ValueError, match="cubre la totalidad de la venta.*utilice un tipo de pago de contado"):
+        registrar_venta(
+            usuario_id=1,
+            tipo_pago="credito",
+            items=items,
+            conn=db_conn,
+            cliente_id=1,
+            monto_pagado=100.0,
+        )
+
+    # 3. Venta a crédito con abono inicial de $35.0 (Financiado neto = $65.0)
+    venta = registrar_venta(
+        usuario_id=1,
+        tipo_pago="credito",
+        items=items,
+        conn=db_conn,
+        cliente_id=1,
+        monto_pagado=35.0,
+    )
+
+    assert venta.id is not None
+    assert venta.total == 100.0
+    assert venta.monto_pagado == 35.0
+    assert venta.tipo_pago == "credito"
+
+    # Stock descontado por la cantidad total comprada (4 unidades)
+    cursor.execute("SELECT stock FROM productos WHERE id = 1")
+    assert cursor.fetchone()["stock"] == stock_inicial - 4
+
+    # Cargo en CxC debe ser exactamente $65.0 (100.0 - 35.0), NO los $100.0
+    cursor.execute("SELECT * FROM cuentas_por_cobrar WHERE venta_id = ?", (venta.id,))
+    cxc = cursor.fetchone()
+    assert cxc is not None
+    assert cxc["tipo_movimiento"] == "cargo"
+    assert cxc["monto"] == 65.0
+    assert cxc["saldo_resultante"] == 65.0
+
+    # Saldo del cliente debe incrementarse solo en $65.0
+    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = 1")
+    assert cursor.fetchone()["saldo_actual"] == saldo_inicial + 65.0
+
