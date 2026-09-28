@@ -39,11 +39,13 @@ def test_crear_y_obtener_cliente(db_conn):
 
 def test_registrar_cargo_exitoso_incremento_saldo(db_conn):
     """
-    Verifica que al registrar un cargo:
+    Verifica que al registrar un cargo dentro del límite de crédito:
     1. Se inserte el registro inmutable en cuentas_por_cobrar con tipo_movimiento='cargo'.
     2. Se incremente clientes.saldo_actual atómicamente.
     """
-    cliente = crear_cliente(nombre="Carmen Rodríguez", conn=db_conn)
+    cliente = crear_cliente(
+        nombre="Carmen Rodríguez", limite_credito=50000.0, conn=db_conn
+    )
     assert cliente.saldo_actual == 0.0
 
     cargo = registrar_cargo(
@@ -70,7 +72,9 @@ def test_registrar_abono_exitoso_decremento_saldo(db_conn):
     1. Se inserte en cuentas_por_cobrar con tipo_movimiento='abono'.
     2. Se reduzca clientes.saldo_actual de manera atómica.
     """
-    cliente = crear_cliente(nombre="Luis Martínez", conn=db_conn)
+    cliente = crear_cliente(
+        nombre="Luis Martínez", limite_credito=100000.0, conn=db_conn
+    )
     registrar_cargo(cliente_id=cliente.id, monto=50000.0, conn=db_conn)
 
     # Abono parcial de 20.000
@@ -97,7 +101,9 @@ def test_rechazo_abonos_monto_invalido_o_superior(db_conn):
     - Monto <= 0 debe ser rechazado.
     - Monto > saldo_actual debe ser rechazado para evitar saldos a favor o negativos.
     """
-    cliente = crear_cliente(nombre="Marcos Peña", conn=db_conn)
+    cliente = crear_cliente(
+        nombre="Marcos Peña", limite_credito=50000.0, conn=db_conn
+    )
     registrar_cargo(cliente_id=cliente.id, monto=15000.0, conn=db_conn)
 
     # Monto cero o negativo
@@ -121,7 +127,9 @@ def test_inmutabilidad_triggers_bloquean_update_delete(db_conn):
     impidan estrictamente cualquier operación UPDATE o DELETE en cuentas_por_cobrar,
     garantizando el patrón Append-Only inmutable (RNF-05 y RF-CXC-01).
     """
-    cliente = crear_cliente(nombre="Ana Torres", conn=db_conn)
+    cliente = crear_cliente(
+        nombre="Ana Torres", limite_credito=50000.0, conn=db_conn
+    )
     cargo = registrar_cargo(cliente_id=cliente.id, monto=10000.0, conn=db_conn)
 
     cursor = db_conn.cursor()
@@ -146,7 +154,9 @@ def test_consultar_saldo_e_historial_cxc(db_conn):
     Verifica el flujo completo de múltiples cargos y abonos,
     la consulta de saldo y la recuperación cronológica del historial.
     """
-    cliente = crear_cliente(nombre="Sofía Herrera", conn=db_conn)
+    cliente = crear_cliente(
+        nombre="Sofía Herrera", limite_credito=100000.0, conn=db_conn
+    )
 
     # Cargo 1: 30.000 (saldo 30.000)
     registrar_cargo(cliente.id, 30000.0, db_conn, descripcion="Cargo 1")
@@ -177,7 +187,9 @@ def test_atomicidad_y_rollback_en_fallo(db_conn):
     Verifica que si ocurre un fallo durante la transacción (por ejemplo, en el UPDATE a clientes),
     se ejecute rollback automático y no queden registros huérfanos en cuentas_por_cobrar ni se altere el saldo.
     """
-    cliente = crear_cliente(nombre="Roberto Gómez Fallo", conn=db_conn)
+    cliente = crear_cliente(
+        nombre="Roberto Gómez Fallo", limite_credito=50000.0, conn=db_conn
+    )
     cursor = db_conn.cursor()
 
     # Instalar trigger temporal que fuerza abort durante el UPDATE a clientes
@@ -195,7 +207,10 @@ def test_atomicidad_y_rollback_en_fallo(db_conn):
         registrar_cargo(cliente.id, 20000.0, db_conn)
 
     # Verificar que el rollback atómico deshizo la inserción en cuentas_por_cobrar
-    cursor.execute("SELECT count(*) as total FROM cuentas_por_cobrar WHERE cliente_id = ?", (cliente.id,))
+    cursor.execute(
+        "SELECT count(*) as total FROM cuentas_por_cobrar WHERE cliente_id = ?",
+        (cliente.id,),
+    )
     assert cursor.fetchone()["total"] == 0
 
     # Verificar que el saldo del cliente se mantiene intacto en 0.0
@@ -205,7 +220,7 @@ def test_atomicidad_y_rollback_en_fallo(db_conn):
 def test_registrar_cargo_excede_limite_credito(db_conn):
     """
     Verifica que registrar_cargo rechace transacciones que superen el límite
-    de crédito asignado al cliente cuando limite_credito > 0.
+    de crédito asignado al cliente.
     """
     cliente = crear_cliente(
         nombre="Fabián Castro",
@@ -225,3 +240,12 @@ def test_registrar_cargo_excede_limite_credito(db_conn):
     assert consultar_saldo(cliente.id, db_conn) == 30000.0
 
 
+def test_registrar_cargo_cliente_sin_cupo_asignado_rechaza_cualquier_cargo(db_conn):
+    """
+    Verifica que un cliente recién creado con límite de crédito por defecto (0.0)
+    no pueda recibir ningún cargo, rechazando incluso montos mínimos (ej. $1.000).
+    """
+    cliente = crear_cliente(nombre="Cliente Sin Cupo", conn=db_conn)  # limite_credito=0.0 por defecto
+    with pytest.raises(ValueError, match="El cargo excede el límite de crédito del cliente"):
+        registrar_cargo(cliente.id, 1000.0, db_conn)
+    assert consultar_saldo(cliente.id, db_conn) == 0.0

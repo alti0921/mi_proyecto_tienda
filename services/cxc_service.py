@@ -129,7 +129,7 @@ def registrar_cargo(
     limite_credito = float(row["limite_credito"] or 0.0)
     nuevo_saldo = round(saldo_actual + monto, 2)
 
-    if limite_credito > 0 and nuevo_saldo > limite_credito:
+    if nuevo_saldo > limite_credito:
         raise ValueError(
             f"El cargo excede el límite de crédito del cliente (Cupo: {limite_credito}, Saldo resultante: {nuevo_saldo})."
         )
