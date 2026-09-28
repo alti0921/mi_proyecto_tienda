@@ -119,14 +119,20 @@ def registrar_cargo(
 
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, saldo_actual, activo FROM clientes WHERE id = ?", (cliente_id,)
+        "SELECT id, saldo_actual, limite_credito, activo FROM clientes WHERE id = ?", (cliente_id,)
     )
     row = cursor.fetchone()
     if not row or not row["activo"]:
         raise ValueError(f"Cliente ID {cliente_id} no encontrado o inactivo.")
 
     saldo_actual = float(row["saldo_actual"] or 0.0)
+    limite_credito = float(row["limite_credito"] or 0.0)
     nuevo_saldo = round(saldo_actual + monto, 2)
+
+    if limite_credito > 0 and nuevo_saldo > limite_credito:
+        raise ValueError(
+            f"El cargo excede el límite de crédito del cliente (Cupo: {limite_credito}, Saldo resultante: {nuevo_saldo})."
+        )
 
     try:
         cursor.execute(

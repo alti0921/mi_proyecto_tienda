@@ -12,25 +12,6 @@ from services.inventario_service import (
     listar_alertas_stock,
 )
 
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
-
-@pytest.fixture
-def db_conn():
-    """
-    Fixture que crea una base de datos SQLite en memoria e inicializa
-    el esquema completo definido en db/schema.sql.
-    """
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    
-    with open(SCHEMA_PATH, encoding="utf-8") as f:
-        conn.executescript(f.read())
-    
-    yield conn
-    conn.close()
-
-
 def test_crear_producto_exitoso(db_conn):
     """Verifica la creación exitosa de un producto con todos sus atributos."""
     prod = crear_producto(

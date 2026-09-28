@@ -201,3 +201,27 @@ def test_atomicidad_y_rollback_en_fallo(db_conn):
     # Verificar que el saldo del cliente se mantiene intacto en 0.0
     assert consultar_saldo(cliente.id, db_conn) == 0.0
 
+
+def test_registrar_cargo_excede_limite_credito(db_conn):
+    """
+    Verifica que registrar_cargo rechace transacciones que superen el límite
+    de crédito asignado al cliente cuando limite_credito > 0.
+    """
+    cliente = crear_cliente(
+        nombre="Fabián Castro",
+        limite_credito=50000.0,
+        conn=db_conn,
+    )
+
+    # Cargo permitido dentro del cupo (30.000 <= 50.000)
+    registrar_cargo(cliente.id, 30000.0, db_conn)
+    assert consultar_saldo(cliente.id, db_conn) == 30000.0
+
+    # Cargo que excede el cupo (30.000 + 25.000 = 55.000 > 50.000)
+    with pytest.raises(ValueError, match="El cargo excede el límite de crédito del cliente"):
+        registrar_cargo(cliente.id, 25000.0, db_conn)
+
+    # El saldo no debe haber cambiado
+    assert consultar_saldo(cliente.id, db_conn) == 30000.0
+
+
