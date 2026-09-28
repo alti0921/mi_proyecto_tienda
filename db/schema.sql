@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS usuarios;
 -- Requisito: RF-AUT-01 (Autenticación y roles)
 CREATE TABLE usuarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE NOT NULL COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     nombre TEXT NOT NULL,
     rol TEXT NOT NULL DEFAULT 'vendedor' CHECK (rol IN ('admin', 'vendedor')),
