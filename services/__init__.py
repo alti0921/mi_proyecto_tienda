@@ -26,6 +26,11 @@ from services.cxc_service import (
     consultar_saldo,
     obtener_historial_cxc,
 )
+from services.pos_service import (
+    asignar_limite_credito,
+    registrar_venta,
+    LineaVentaInput,
+)
 
 __all__ = [
     "calcular_v1_1",
@@ -50,4 +55,7 @@ __all__ = [
     "registrar_abono",
     "consultar_saldo",
     "obtener_historial_cxc",
+    "asignar_limite_credito",
+    "registrar_venta",
+    "LineaVentaInput",
 ]

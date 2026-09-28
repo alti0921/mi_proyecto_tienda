@@ -330,11 +330,14 @@ def registrar_snapshot(
     cat_ant: str,
     cat_nueva: str,
     motivo: str,
-    conn: sqlite3.Connection
+    conn: sqlite3.Connection,
+    auto_commit: bool = True,
 ) -> ScoringHistorial:
     """
     Registra una entrada inmutable de trazabilidad en scoring_historial (Append-Only).
     Garantiza el casteo explícito a entero (int) de los puntajes antes de persistir en SQLite.
+    Si auto_commit es True, confirma o revierte la transacción internamente.
+    Si es False, delega el control transaccional al orquestador.
     """
     score_ant_int = int(round(score_ant))
     score_nuevo_int = int(round(score_nuevo))
@@ -358,10 +361,11 @@ def registrar_snapshot(
             WHERE id = ?
         """, (score_nuevo_int, cat_nueva, cliente_id))
 
-        # Confirmación atómica de la transacción
-        conn.commit()
+        if auto_commit:
+            conn.commit()
     except Exception as e:
-        conn.rollback()
+        if auto_commit:
+            conn.rollback()
         raise e
 
     return ScoringHistorial(

@@ -107,12 +107,15 @@ def registrar_cargo(
     conn: sqlite3.Connection,
     venta_id: Optional[int] = None,
     descripcion: Optional[str] = None,
+    auto_commit: bool = True,
 ) -> CuentaPorCobrar:
     """
     Registra un cargo a la cuenta por cobrar del cliente (RF-CXC-01).
     Garantiza atomicidad transaccional:
     1. Inserta el movimiento inmutable en cuentas_por_cobrar.
     2. Actualiza clientes.saldo_actual = saldo_actual + monto.
+    Si auto_commit es True, confirma o revierte la transacción internamente.
+    Si es False, delega el control transaccional al orquestador.
     """
     if monto <= 0:
         raise ValueError(f"El monto del cargo debe ser mayor a cero (recibido: {monto}).")
@@ -150,9 +153,11 @@ def registrar_cargo(
             "UPDATE clientes SET saldo_actual = ? WHERE id = ?",
             (nuevo_saldo, cliente_id),
         )
-        conn.commit()
+        if auto_commit:
+            conn.commit()
     except Exception as e:
-        conn.rollback()
+        if auto_commit:
+            conn.rollback()
         raise e
 
     # Consultar fecha_movimiento asignada por SQLite
@@ -180,6 +185,7 @@ def registrar_abono(
     conn: sqlite3.Connection,
     venta_id: Optional[int] = None,
     descripcion: Optional[str] = None,
+    auto_commit: bool = True,
 ) -> CuentaPorCobrar:
     """
     Registra un abono a la cuenta del cliente (RF-CXC-01).
@@ -187,6 +193,8 @@ def registrar_abono(
     Garantiza atomicidad transaccional:
     1. Inserta el movimiento inmutable en cuentas_por_cobrar.
     2. Actualiza clientes.saldo_actual = saldo_actual - monto.
+    Si auto_commit es True, confirma o revierte la transacción internamente.
+    Si es False, delega el control transaccional al orquestador.
     """
     if monto <= 0:
         raise ValueError(f"El monto del abono debe ser mayor a cero (recibido: {monto}).")
@@ -223,9 +231,11 @@ def registrar_abono(
             "UPDATE clientes SET saldo_actual = ? WHERE id = ?",
             (nuevo_saldo, cliente_id),
         )
-        conn.commit()
+        if auto_commit:
+            conn.commit()
     except Exception as e:
-        conn.rollback()
+        if auto_commit:
+            conn.rollback()
         raise e
 
     # Consultar fecha_movimiento asignada por SQLite
