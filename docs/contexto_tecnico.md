@@ -32,8 +32,9 @@
 | `models/*.py` (dataclasses puras) | ✅ Verificado contra schema | Implícita vía tests de servicios |
 | `services/scoring_service.py` | ✅ Auditado y corregido (ver Sección 4) | `tests/test_scoring.py` — 8 tests |
 | `services/inventario_service.py` | ✅ Auditado y corregido (ver Sección 4) | `tests/test_inventario.py` — 10 tests |
-| `services/cxc_service.py` | ✅ Auditado y corregido (ver Sección 4) | `tests/test_cxc.py` — 10 tests |
-| **Total suite** | ✅ **28/28 passed** | Confirmado en terminal (pytest 9.1.1, Python 3.12.10) |
+| `services/cxc_service.py` | ✅ Auditado y corregido (ver Sección 4) | `tests/test_cxc.py` — 9 tests |
+| `services/pos_service.py` | ✅ Auditado y corregido (ver Sección 4) — **backend completo** | `tests/test_pos.py` — 12 tests |
+| **Total suite** | ✅ **40/40 passed** | Confirmado en terminal (pytest 9.1.1, Python 3.12.10) |
 
 ### 1.3 Documentos de Fase 2 ya entregados (recién compartidos)
 
@@ -264,9 +265,58 @@ def obtener_historial_cxc(cliente_id, conn) -> List[CuentaPorCobrar]: ...
 
 **Separación de responsabilidades confirmada:** `pos_service.py` es el "cerebro comercial" — evalúa `calcular_score()` fresco, aplica la matriz de decisión (bloqueo Clase D, abono mínimo Clase C) y autoriza o no la venta. `cxc_service.py` es el ledger — nunca decide, solo ejecuta y protege la integridad contable con una salvaguarda dura de cupo como última línea de defensa (para que ninguna llamada directa, administrativa o futura, pueda saltarse el límite de crédito).
 
-**Importante — `evaluar_cold_start()` NO persiste el cupo semilla.** Es una función de solo lectura: devuelve una sugerencia en memoria (`cupo_semilla`, `plazo_dias=15`), pero nunca ejecuta `UPDATE clientes SET limite_credito = ...`. La asignación efectiva del cupo a un cliente cold-start requiere una acción operativa explícita (confirmación del tendero en la UI, o una llamada explícita a `crear_cliente(..., limite_credito=...)` / una futura función de actualización de cupo). Esto es una decisión de diseño deliberada (ver RF-SCR-02 corregido en Sección 5) — un sistema de riesgo crediticio no debe auto-asignar cupo sin que una persona lo confirme.
+**Importante — `evaluar_cold_start()` NO persiste el cupo semilla.** Es una función de solo lectura: devuelve una sugerencia en memoria (`cupo_semilla`, `plazo_dias=15`), pero nunca ejecuta `UPDATE clientes SET limite_credito = ...`. La asignación efectiva del cupo a un cliente cold-start requiere una acción operativa explícita. Esto es una decisión de diseño deliberada (ver RF-SCR-02 corregido en Sección 5) — un sistema de riesgo crediticio no debe auto-asignar cupo sin que una persona lo confirme.
 
-### 3.4 `services/inventario_service.py` — gestión de stock (final, 10/10 tests en verde)
+### 3.4 `services/pos_service.py` — orquestador transaccional de ventas (final, 12/12 tests en verde, backend completo)
+
+```python
+def asignar_limite_credito(cliente_id: int, nuevo_limite: float, conn: sqlite3.Connection) -> Cliente:
+    """Confirmación operativa y auditable del cupo (cierra RF-SCR-02). Commit propio,
+    se usa como acción independiente, no compuesta dentro de registrar_venta."""
+    ...
+
+def _validar_credito_clase_c(cliente_id: int, conn: sqlite3.Connection) -> None:
+    """
+    RF-SCR-04: exige que el ÚLTIMO movimiento en cuentas_por_cobrar del cliente sea un
+    abono que cubra >= 50% del saldo que existía justo antes de ese abono
+    (saldo_previo = saldo_resultante + monto_abono, reconstruido desde el ledger inmutable).
+    Sin parámetros de bypass -- 100% determinista contra la BD.
+    """
+    ...
+
+def registrar_venta(
+    usuario_id: int,
+    tipo_pago: str,
+    items: List[Union[LineaVentaInput, Dict[str, Any], Any]],
+    conn: sqlite3.Connection,
+    cliente_id: Optional[int] = None,
+    monto_pagado: float = 0.0,
+) -> Venta:
+    """
+    Orquestador atómico. Flujo:
+    1. Valida items (cantidad>0, precio>=0) y monto_pagado (>=0, y para
+       efectivo/nequi: monto_pagado >= total; para credito: monto_pagado < total,
+       si no exige tipo de pago de contado).
+    2. Si credito: valida cliente activo, calcula_score() fresco, aplica matriz:
+       - Clase D -> ValueError (RF-SCR-03)
+       - Clase C y NO cold-start -> _validar_credito_clase_c() (RF-SCR-04)
+       - Clase A/B o cold-start -> autoriza
+    3. Bloque atómico (un solo commit/rollback):
+       a. inventario_service.ajustar_stock(-cantidad) por cada producto_id
+       b. INSERT ventas, INSERT venta_detalle
+       c. Si credito: monto_a_fiar = round(total - monto_pagado, 2)
+          cxc_service.registrar_cargo(cliente_id, monto_a_fiar, conn, venta_id, auto_commit=False)
+          scoring_service.registrar_snapshot(..., auto_commit=False)
+       d. conn.commit() unificado / except: conn.rollback() + re-raise
+    """
+    ...
+```
+
+**Composición transaccional (Opción B):** `registrar_cargo`, `registrar_abono` y `registrar_snapshot` reciben ahora `auto_commit: bool = True`. Llamadas aisladas/tests siguen comiteando solas (retrocompatible); `pos_service.py` las invoca con `auto_commit=False` para que el commit/rollback quede centralizado en `registrar_venta`. Verificado con `test_atomicidad_post_cargo_fallo_en_snapshot`, que fuerza el fallo **después** de que `registrar_cargo` ya se ejecutó (el escenario que realmente expone el bug de commits anidados) y confirma reversión total: 0 ventas, 0 detalle, stock intacto, 0 cargos, saldo sin alterar.
+
+**Abono inicial en venta a crédito:** el cargo a `cuentas_por_cobrar` se calcula sobre `monto_a_fiar = total - monto_pagado`, nunca sobre `total` completo — evita cobrar de más cuando el cliente paga una parte en efectivo al momento de la venta.
+
+### 3.5 `services/inventario_service.py` — gestión de stock (final, 10/10 tests en verde)
 
 ```python
 import math
@@ -294,7 +344,7 @@ def ajustar_stock(producto_id, cantidad, conn) -> Producto:
 # listar_alertas_stock (stock <= stock_minimo)
 ```
 
-### 3.5 Modelos de dominio confirmados
+### 3.6 Modelos de dominio confirmados
 
 - `models/producto.py` → `Producto`: `stock: int`, `stock_minimo: int` (corregido de float a int para calzar con el schema), más `@property margen` y `@property alerta_stock_bajo`.
 - `models/cuenta_por_cobrar.py` → `CuentaPorCobrar` (DTO/Read-Model, no se persiste directo) y `Abono` (NO es tabla — filtro de `cuentas_por_cobrar` donde `tipo_movimiento='abono'`).
@@ -318,6 +368,9 @@ def ajustar_stock(producto_id, cantidad, conn) -> Producto:
 | 10 | **Traducción confusa "12-15 días calendario"**: la documentación traducía la mora efectiva a un rango de "días calendario equivalentes", generando inconsistencia con el rango literal "7-10 días" de P-Q9 citado en la misma tabla | Eliminada la conversión — se aplica el rango de P-Q9 **directamente** sobre `dias_mora_efectiva = max(0, dias_transcurridos - 8)` | Sincronizado en 4 documentos: tesis metodológica, sustentación, matriz de scoring, ERS (RF-SCR-01, RF-REP-02) |
 | 11 | **`ventas` sin restricción de `cliente_id` en ventas a crédito**: el schema permitía `tipo_pago='credito'` con `cliente_id=NULL`, lo cual generaría cargos huérfanos imposibles de cobrar (`cuentas_por_cobrar.cliente_id` es `NOT NULL`) | Se agregó `CHECK (tipo_pago != 'credito' OR cliente_id IS NOT NULL)` en `db/schema.sql` | Test `test_venta_credito_requiere_cliente_integrity_error` — PASSED (verifica `sqlite3.IntegrityError`) |
 | 12 | **Salvaguarda de `limite_credito` con vacío en el caso por defecto**: `registrar_cargo()` en `cxc_service.py` implementó primero `if limite_credito > 0 and nuevo_saldo > limite_credito`, lo que dejaba **sin protección exactamente a los clientes nuevos** (`limite_credito=0.0` por defecto en `crear_cliente`) — el caso más común, ya que cero cupo se interpretaba como "sin límite" en vez de "cupo cero" | Se eliminó la guarda `limite_credito > 0`; ahora `if nuevo_saldo > limite_credito` se aplica siempre, de modo que `limite_credito=0.0` bloquea cualquier cargo fiado | Test `test_registrar_cargo_cliente_sin_cupo_asignado_rechaza_cualquier_cargo` — PASSED |
+| 13 | **Commits anidados rompían la atomicidad compuesta**: `registrar_cargo`, `registrar_abono` y `registrar_snapshot` hacían su propio `conn.commit()` interno; al componerlos dentro de `pos_service.registrar_venta()`, un fallo tardío (ej. en `registrar_snapshot`) no podía revertir lo ya comiteado por `registrar_cargo`, dejando ventas/cargos huérfanos sin su snapshot | Se agregó `auto_commit: bool = True` a las tres funciones; `pos_service.py` las invoca con `auto_commit=False` y centraliza un único `conn.commit()`/`conn.rollback()` en `registrar_venta` | Test `test_atomicidad_post_cargo_fallo_en_snapshot` — fuerza el fallo *después* de `registrar_cargo` y confirma reversión total (0 ventas, 0 detalle, stock intacto, 0 cargos, saldo sin alterar) |
+| 14 | **Venta a crédito con abono inicial cobraba de más**: el diseño original de `pos_service` pasaba `total` completo a `cxc_service.registrar_cargo`, sin descontar ningún anticipo en efectivo entregado en la misma venta a crédito | Se calcula `monto_a_fiar = round(total - monto_pagado, 2)` y ese es el único monto que se carga a `cuentas_por_cobrar`; se valida `0 <= monto_pagado < total` para crédito (si `monto_pagado >= total`, exige tipo de pago de contado) | Test `test_venta_credito_con_abono_inicial_registra_solo_saldo_pendiente` — PASSED |
+| 15 | **Bypass potencial en RF-SCR-04**: la primera versión de `_validar_credito_clase_c` tenía un parámetro `abono_previo_verificado: bool = False` que, de estar expuesto en la firma pública de `registrar_venta`, habría permitido a cualquier llamador saltarse la exigencia de abono del 50% | Se eliminó el parámetro por completo; la función ahora es 100% determinista contra `cuentas_por_cobrar` sin ninguna vía de excepción externa | Confirmado explícitamente que `registrar_venta(usuario_id, tipo_pago, items, conn, cliente_id=None, monto_pagado=0.0)` no expone ninguna bandera de bypass |
 
 ---
 
@@ -371,21 +424,24 @@ Pendiente menor no bloqueante: `RF-SCR-02` tampoco menciona el `plazo_dias=15` q
 
 ---
 
-## 7. Siguiente paso exacto en la hoja de ruta
+## 7. ✅ Backend certificado completo — siguiente paso: wireframes de Fase 2
 
-**Paso pendiente de Fase 2 (sigue abierto, en paralelo):**
-Construir los **wireframes de las 5 pantallas**: Login, POS, Perfil cliente/CxC, Inventario, Reportes. Único entregable formal de Fase 2 que falta.
+**Backend 100% cerrado (40/40 tests en verde):** `db/schema.sql`, `/models`, `scoring_service.py`, `inventario_service.py`, `cxc_service.py` y `pos_service.py` — todos auditados línea por línea, con atomicidad verificada de punta a punta (incluyendo la composición correcta de transacciones anidadas vía `auto_commit`) y sin ninguna vía de bypass de las reglas de negocio (RF-SCR-03/04, RF-CXC-06).
 
-**Paso inmediato de Fase 3 (con luz verde otorgada — empezar ya):**
-1. Construir `services/pos_service.py`, integrando:
-   - `inventario_service.ajustar_stock()` para descontar stock por cada línea de venta.
-   - `cxc_service.registrar_cargo()` cuando `tipo_pago='credito'` — que ya trae su propia salvaguarda de cupo (RF-CXC-06), así que `pos_service.py` **no necesita reimplementar** la validación de límite, solo manejar el `ValueError` que puede lanzar y traducirlo a un mensaje claro para el tendero.
-   - Evaluación de matriz de decisión (`aplicar_matriz_decision` + `calcular_score` fresco) **antes** de autorizar la venta a crédito: bloqueo si Clase D (RF-SCR-03), exigir abono previo del 50% si Clase C (RF-SCR-04).
-   - Todo dentro de una única transacción atómica por venta (venta + `venta_detalle` + ajuste de stock + cargo CxC = todo o nada).
-2. Definir explícitamente dónde y cuándo se persiste el `limite_credito` de un cliente cold-start (según la Opción A ya decidida: requiere confirmación del tendero — probablemente una función nueva tipo `pos_service.confirmar_cupo_cold_start()` o similar, a diseñar).
-3. Escribir `tests/test_pos.py` con el mismo patrón de fixtures SQLite en memoria con schema real (no mocks).
-4. Recién después, iniciar `/ui` (Tkinter), una vez existan los wireframes.
+`services/pos_service.py` (`registrar_venta`) es ahora el único punto de entrada para registrar una venta — orquesta inventario, CxC y scoring en una sola transacción atómica, y su firma pública no expone ningún parámetro que permita saltarse la evaluación de riesgo.
+
+**Único entregable pendiente de Fase 2:**
+Construir los **wireframes de las 5 pantallas**: Login, POS, Perfil cliente/CxC, Inventario, Reportes.
+
+**Siguiente paso de Fase 3 (después de los wireframes):**
+1. Iniciar `/ui` (Tkinter), consumiendo exclusivamente las funciones públicas ya auditadas de `services/`:
+   - `pos_service.registrar_venta(...)` para el flujo de venta (POS).
+   - `pos_service.asignar_limite_credito(...)` para que el tendero confirme el cupo semilla de un cliente cold-start (pantalla de Perfil cliente/CxC) — **este paso operativo debe tener un lugar visible en el wireframe correspondiente**, ya que sin él ningún cliente nuevo puede comprar fiado.
+   - `cxc_service.crear_cliente(...)`, `obtener_cliente(...)`, `obtener_historial_cxc(...)` para registro y consulta de clientes.
+   - `inventario_service.*` para el módulo de Inventario.
+   - `scoring_service.calcular_score(...)` / `aplicar_matriz_decision(...)` para mostrar clase de riesgo en el perfil del cliente.
+2. La UI no debe reimplementar ninguna validación de negocio (límites de cupo, clases de riesgo, atomicidad) — todo eso ya vive en `/services` y está probado; la capa `/ui` solo captura eventos, llama a los servicios y muestra resultados/errores.
 
 ---
 
-*Última actualización: cierre de `cxc_service.py`, nueva RF-CXC-06 y corrección de RF-SCR-02. Generado por Claude a partir de la auditoría acumulada del proyecto.*
+*Última actualización: cierre completo del backend (`pos_service.py`, atomicidad compuesta, abono inicial, eliminación de bypass en RF-SCR-04). Generado por Claude a partir de la auditoría acumulada del proyecto.*
