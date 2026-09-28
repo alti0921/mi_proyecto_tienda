@@ -53,15 +53,12 @@ def asignar_limite_credito(
 def _validar_credito_clase_c(
     cliente_id: int,
     conn: sqlite3.Connection,
-    abono_previo_verificado: bool = False,
 ) -> None:
     """
     Valida la regla de negocio RF-SCR-04 para clientes en Clase C (Riesgo Alto / Congelado):
-    Exige un abono previo de al menos el 50% de su saldo antes de despachar un nuevo fiado.
+    Exige obligatoriamente un abono previo de al menos el 50% de su saldo antes de despachar un nuevo fiado.
+    Evaluado exclusivamente contra la base de datos inmutable.
     """
-    if abono_previo_verificado:
-        return
-
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -147,7 +144,6 @@ def registrar_venta(
     conn: sqlite3.Connection,
     cliente_id: Optional[int] = None,
     monto_pagado: float = 0.0,
-    abono_previo_verificado: bool = False,
 ) -> Venta:
     """
     Orquestador comercial y transaccional del Punto de Venta (POS).
@@ -217,7 +213,7 @@ def registrar_venta(
             )
 
         if (decision.get("congelado") or categoria_riesgo == "C") and not cold_start.get("es_cold_start"):
-            _validar_credito_clase_c(cliente_id, conn, abono_previo_verificado)
+            _validar_credito_clase_c(cliente_id, conn)
 
     # Iniciar bloque transaccional atómico
     try:
