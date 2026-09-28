@@ -31,6 +31,14 @@ from services.pos_service import (
     registrar_venta,
     LineaVentaInput,
 )
+from services.auth_service import (
+    autenticar_usuario,
+    crear_usuario,
+    generar_password_hash,
+    verificar_password,
+    obtener_usuario_por_id,
+    obtener_usuario_por_username,
+)
 
 __all__ = [
     "calcular_v1_1",
@@ -58,4 +66,10 @@ __all__ = [
     "asignar_limite_credito",
     "registrar_venta",
     "LineaVentaInput",
+    "autenticar_usuario",
+    "crear_usuario",
+    "generar_password_hash",
+    "verificar_password",
+    "obtener_usuario_por_id",
+    "obtener_usuario_por_username",
 ]

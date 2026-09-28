@@ -89,7 +89,7 @@ def _validar_credito_clase_c(
         )
 
 
-def _normalizar_item(item: Union[LineaVentaInput, Dict[str, Any], Any], conn: sqlite3.Connection) -> Dict[str, Any]:
+def _normalizar_item(item: Union[LineaVentaInput, Dict[str, Any]], conn: sqlite3.Connection) -> Dict[str, Any]:
     """
     Normaliza y valida un ítem o línea de venta.
     Admite LineaVentaInput, diccionarios u objetos equivalentes.
@@ -140,7 +140,7 @@ def _normalizar_item(item: Union[LineaVentaInput, Dict[str, Any], Any], conn: sq
 def registrar_venta(
     usuario_id: int,
     tipo_pago: str,
-    items: List[Union[LineaVentaInput, Dict[str, Any], Any]],
+    items: List[Union[LineaVentaInput, Dict[str, Any]]],
     conn: sqlite3.Connection,
     cliente_id: Optional[int] = None,
     monto_pagado: float = 0.0,

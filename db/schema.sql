@@ -143,7 +143,7 @@ END;
 -- DATOS SEMILLA INICIALES (Producción / Sistema)
 -- ============================================================================
 
--- Usuario Administrador Inicial para autenticación del sistema
+-- Usuario Administrador Inicial para autenticación del sistema (credenciales por defecto: admin / admin123)
 INSERT INTO usuarios (username, password_hash, nombre, rol, activo)
-VALUES ('admin', 'scrypt:32768:8:1$hash_admin_secret_key$', 'Administrador del Sistema', 'admin', 1);
+VALUES ('admin', 'sha256$a1b2c3d4e5f60718$9879a6c081970a685052bdaf0cba84347009c2f6f758c7a05257f5dcd6485ca8', 'Administrador del Sistema', 'admin', 1);
 

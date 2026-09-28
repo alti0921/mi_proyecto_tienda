@@ -1,3 +1,4 @@
+from models.usuario import Usuario
 from models.cliente import Cliente
 from models.producto import Producto
 from models.venta import Venta
@@ -6,6 +7,7 @@ from models.cuenta_por_cobrar import CuentaPorCobrar
 from models.scoring import ScoringHistorial
 
 __all__ = [
+    "Usuario",
     "Cliente",
     "Producto",
     "Venta",
