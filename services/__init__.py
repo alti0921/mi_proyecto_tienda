@@ -18,6 +18,14 @@ from services.inventario_service import (
     desactivar_producto,
     listar_alertas_stock,
 )
+from services.cxc_service import (
+    crear_cliente,
+    obtener_cliente,
+    registrar_cargo,
+    registrar_abono,
+    consultar_saldo,
+    obtener_historial_cxc,
+)
 
 __all__ = [
     "calcular_v1_1",
@@ -36,4 +44,10 @@ __all__ = [
     "ajustar_stock",
     "desactivar_producto",
     "listar_alertas_stock",
+    "crear_cliente",
+    "obtener_cliente",
+    "registrar_cargo",
+    "registrar_abono",
+    "consultar_saldo",
+    "obtener_historial_cxc",
 ]
