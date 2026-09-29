@@ -43,6 +43,11 @@ from services.auth_service import (
     obtener_usuario_por_id,
     obtener_usuario_por_username,
 )
+from services.reportes_service import (
+    obtener_arqueo_diario,
+    obtener_consolidado_cartera,
+    clasificar_banda_mora,
+)
 
 __all__ = [
     "calcular_v1_1",
@@ -80,4 +85,7 @@ __all__ = [
     "verificar_password",
     "obtener_usuario_por_id",
     "obtener_usuario_por_username",
+    "obtener_arqueo_diario",
+    "obtener_consolidado_cartera",
+    "clasificar_banda_mora",
 ]
