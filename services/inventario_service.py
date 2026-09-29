@@ -324,15 +324,16 @@ def ajustar_stock(
 
 def desactivar_producto(producto_id: int, conn: sqlite3.Connection) -> bool:
     """
-    Desactiva (baja lógica) un producto sin eliminar su historial en ventas.
-    Retorna True si se desactivó exitosamente, False si no existía.
+    Desactiva (baja lógica) un producto sin eliminar su historial en ventas (RF-INV-01).
+    Lanza ValueError si el producto no existe o ya se encuentra inactivo.
+    Retorna True si se desactivó exitosamente.
     """
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id FROM productos WHERE id = ? AND activo = 1", (producto_id,)
     )
     if not cursor.fetchone():
-        return False
+        raise ValueError(f"Producto ID {producto_id} no encontrado o inactivo.")
 
     try:
         cursor.execute(

@@ -254,6 +254,13 @@ def test_desactivar_producto_baja_logica(db_conn):
     ids_todos = [p.id for p in todos]
     assert prod.id in ids_todos
 
+    # Desactivar un producto ya inactivo o inexistente debe lanzar ValueError (Parche #18)
+    with pytest.raises(ValueError, match=f"Producto ID {prod.id} no encontrado o inactivo."):
+        desactivar_producto(prod.id, db_conn)
+
+    with pytest.raises(ValueError, match="Producto ID 9999 no encontrado o inactivo."):
+        desactivar_producto(9999, db_conn)
+
 
 def test_listar_alertas_stock_bajo(db_conn):
     """Verifica que se listen correctamente los productos cuyo stock <= stock_minimo."""
