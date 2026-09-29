@@ -13,3 +13,9 @@ class Cliente:
     score_crediticio: int = 60
     categoria_riesgo: str = "B"
     activo: bool = True
+
+    @property
+    def cupo_disponible(self) -> float:
+        """Calcula el cupo de crédito disponible actual (RF-CXC-05)."""
+        return max(0.0, round(self.limite_credito - self.saldo_actual, 2))
+

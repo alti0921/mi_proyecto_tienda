@@ -10,6 +10,7 @@ from services.inventario_service import (
     ajustar_stock,
     desactivar_producto,
     listar_alertas_stock,
+    buscar_productos,
 )
 
 def test_crear_producto_exitoso(db_conn):
@@ -319,3 +320,60 @@ def test_producto_propiedades_calculadas(db_conn):
     assert prod_ajustado.stock == 10
     assert isinstance(prod_ajustado.stock, int)
     assert prod_ajustado.alerta_stock_bajo is False
+
+
+def test_buscar_productos_seguro(db_conn):
+    """Verifica que buscar_productos filtre correctamente por nombre y código de barras de manera parametrizada y respete solo_activos."""
+    p1 = crear_producto(
+        nombre="Lenteja Parrandera 1kg",
+        categoria="canasta_basica",
+        precio_venta=4500.0,
+        costo=3500.0,
+        conn=db_conn,
+        codigo_barras="7708881111111",
+        stock=10.0,
+    )
+    p2 = crear_producto(
+        nombre="Aceite Premier 1000ml",
+        categoria="canasta_basica",
+        precio_venta=11000.0,
+        costo=9000.0,
+        conn=db_conn,
+        codigo_barras="7708882222222",
+        stock=5.0,
+    )
+    p3 = crear_producto(
+        nombre="Lenteja San Jorge 500g",
+        categoria="canasta_basica",
+        precio_venta=2500.0,
+        costo=1900.0,
+        conn=db_conn,
+        codigo_barras="7708883333333",
+        stock=8.0,
+    )
+
+    # Búsqueda por coincidencia parcial en nombre
+    resultados_lenteja = buscar_productos("Lenteja", db_conn)
+    assert len(resultados_lenteja) == 2
+    nombres = [p.nombre for p in resultados_lenteja]
+    assert "Lenteja Parrandera 1kg" in nombres
+    assert "Lenteja San Jorge 500g" in nombres
+
+    # Búsqueda por coincidencia en código de barras
+    resultados_codigo = buscar_productos("77088822", db_conn)
+    assert len(resultados_codigo) == 1
+    assert resultados_codigo[0].id == p2.id
+
+    # Búsqueda con término vacío devuelve listado completo (comportamiento catálogo/autocompletado)
+    assert len(buscar_productos("", db_conn, solo_activos=True)) == len(listar_productos(db_conn, solo_activos=True))
+    assert len(buscar_productos("   ", db_conn, solo_activos=True)) == len(listar_productos(db_conn, solo_activos=True))
+
+    # Desactivar un producto y verificar filtro solo_activos
+    desactivar_producto(p3.id, db_conn)
+    res_activos = buscar_productos("Lenteja", db_conn, solo_activos=True)
+    assert len(res_activos) == 1
+    assert res_activos[0].id == p1.id
+
+    res_todos = buscar_productos("Lenteja", db_conn, solo_activos=False)
+    assert len(res_todos) == 2
+

@@ -3,6 +3,9 @@ import pytest
 from services.cxc_service import (
     crear_cliente,
     obtener_cliente,
+    listar_clientes,
+    buscar_clientes,
+    actualizar_cliente,
     registrar_cargo,
     registrar_abono,
     consultar_saldo,
@@ -249,3 +252,124 @@ def test_registrar_cargo_cliente_sin_cupo_asignado_rechaza_cualquier_cargo(db_co
     with pytest.raises(ValueError, match="El cargo excede el límite de crédito del cliente"):
         registrar_cargo(cliente.id, 1000.0, db_conn)
     assert consultar_saldo(cliente.id, db_conn) == 0.0
+
+
+def test_actualizar_cliente_exitoso_y_validaciones(db_conn):
+    """
+    Verifica la actualización de datos de un cliente (RF-CXC-01), incluyendo
+    la evolución del nivel_vinculo y el cambio de estado activo.
+    Confirma que limite_credito y saldo_actual permanezcan inalterados.
+    """
+    cliente = crear_cliente(
+        nombre="Carlos Vecino Inicial",
+        telefono="3000000000",
+        direccion="Cra 1 # 2-3",
+        nivel_vinculo="solo_apodo",
+        conn=db_conn,
+    )
+    assert cliente.nivel_vinculo == "solo_apodo"
+    assert cliente.activo is True
+
+    # 1. Actualización exitosa evolucionando nivel_vinculo a conocido_referido
+    cli_actualizado = actualizar_cliente(
+        cliente_id=cliente.id,
+        conn=db_conn,
+        nombre="Carlos Alberto Vecino",
+        telefono="3119998877",
+        direccion="Cra 10 # 20-30",
+        nivel_vinculo="conocido_referido",
+    )
+
+    assert cli_actualizado.nombre == "Carlos Alberto Vecino"
+    assert cli_actualizado.telefono == "3119998877"
+    assert cli_actualizado.direccion == "Cra 10 # 20-30"
+    assert cli_actualizado.nivel_vinculo == "conocido_referido"
+    assert cli_actualizado.limite_credito == 0.0  # Inmutable en esta función
+    assert cli_actualizado.saldo_actual == 0.0    # Inmutable en esta función
+
+    # 2. Desactivación (baja lógica)
+    cli_inactivo = actualizar_cliente(cliente_id=cliente.id, conn=db_conn, activo=0)
+    assert cli_inactivo.activo is False
+
+    # 3. Rechazo de nivel_vinculo inválido
+    with pytest.raises(ValueError, match="Nivel de vínculo 'amigo_intimo' no válido"):
+        actualizar_cliente(cliente_id=cliente.id, conn=db_conn, nivel_vinculo="amigo_intimo")
+
+    # 4. Rechazo de nombre vacío
+    with pytest.raises(ValueError, match="El nombre del cliente no puede estar vacío"):
+        actualizar_cliente(cliente_id=cliente.id, conn=db_conn, nombre="   ")
+
+    # 5. Rechazo de activo inválido
+    with pytest.raises(ValueError, match="El estado activo debe ser 0 o 1"):
+        actualizar_cliente(cliente_id=cliente.id, conn=db_conn, activo=2)
+
+    # 6. Rechazo de cliente inexistente
+    with pytest.raises(ValueError, match="Cliente ID 9999 no encontrado"):
+        actualizar_cliente(cliente_id=9999, conn=db_conn, nombre="Fantasma")
+
+
+def test_buscar_y_listar_clientes_seguro(db_conn):
+    """
+    Verifica listar_clientes y buscar_clientes con parameter binding seguro.
+    Confirma que solo_activos=True excluya clientes inactivos por defecto.
+    """
+    # Crear clientes de prueba
+    c1 = crear_cliente(nombre="Beatriz Helena Pinzón", telefono="3205551122", direccion="Barrio Boston", conn=db_conn)
+    c2 = crear_cliente(nombre="Armando Mendoza Sáenz", telefono="3159994433", direccion="Barrio El Prado", conn=db_conn)
+    c3 = crear_cliente(nombre="Nicolás Mora Cifuentes", telefono="3017778899", direccion="Soledad 2000", conn=db_conn)
+
+    # Inactivar a Nicolás
+    actualizar_cliente(cliente_id=c3.id, conn=db_conn, activo=0)
+
+    # 1. listar_clientes solo activos
+    activos = listar_clientes(db_conn, solo_activos=True)
+    ids_activos = [c.id for c in activos]
+    assert c1.id in ids_activos
+    assert c2.id in ids_activos
+    assert c3.id not in ids_activos
+
+    # 2. buscar_clientes por nombre
+    res_nombre = buscar_clientes("Beatriz", db_conn)
+    assert len(res_nombre) == 1
+    assert res_nombre[0].id == c1.id
+
+    # 3. buscar_clientes por teléfono
+    res_tel = buscar_clientes("99944", db_conn)
+    assert len(res_tel) == 1
+    assert res_tel[0].id == c2.id
+
+    # 4. buscar_clientes por dirección
+    res_dir = buscar_clientes("Prado", db_conn)
+    assert len(res_dir) == 1
+    assert res_dir[0].id == c2.id
+
+    # 5. buscar cliente inactivo con solo_activos=True no debe aparecer
+    assert len(buscar_clientes("Nicolás", db_conn, solo_activos=True)) == 0
+
+    # 6. buscar cliente inactivo con solo_activos=False sí aparece
+    res_inactivo = buscar_clientes("Nicolás", db_conn, solo_activos=False)
+    assert len(res_inactivo) == 1
+    assert res_inactivo[0].id == c3.id
+
+    # 7. Término vacío retorna listado completo
+    assert len(buscar_clientes("", db_conn, solo_activos=True)) == len(activos)
+
+
+def test_cliente_property_cupo_disponible(db_conn):
+    """
+    Verifica que la propiedad calculada cupo_disponible calcule exactamente
+    max(0.0, round(limite_credito - saldo_actual, 2)).
+    """
+    cliente = crear_cliente(nombre="Doña Carmen", limite_credito=100000.0, conn=db_conn)
+    assert cliente.cupo_disponible == 100000.0
+
+    # Registrar un cargo de $40.000
+    registrar_cargo(cliente.id, 40000.0, db_conn)
+    cli_actualizado = obtener_cliente(cliente.id, db_conn)
+    assert cli_actualizado.saldo_actual == 40000.0
+    assert cli_actualizado.cupo_disponible == 60000.0
+
+    # Si el saldo iguala o excede el cupo, cupo_disponible no es negativo
+    cli_tope = crear_cliente(nombre="Don José Cupo Cero", limite_credito=0.0, conn=db_conn)
+    assert cli_tope.cupo_disponible == 0.0
+

@@ -101,6 +101,123 @@ def obtener_cliente(cliente_id: int, conn: sqlite3.Connection) -> Optional[Clien
     return _row_to_cliente(row) if row else None
 
 
+def listar_clientes(conn: sqlite3.Connection, solo_activos: bool = True) -> List[Cliente]:
+    """
+    Lista todos los clientes registrados. Por defecto retorna solo los activos.
+    """
+    cursor = conn.cursor()
+    if solo_activos:
+        cursor.execute("SELECT * FROM clientes WHERE activo = 1 ORDER BY nombre ASC")
+    else:
+        cursor.execute("SELECT * FROM clientes ORDER BY nombre ASC")
+    return [_row_to_cliente(row) for row in cursor.fetchall()]
+
+
+def buscar_clientes(
+    termino: str,
+    conn: sqlite3.Connection,
+    solo_activos: bool = True,
+) -> List[Cliente]:
+    """
+    Busca clientes por coincidencia parcial en nombre, teléfono o dirección (RF-CXC-01 / RF-POS-01).
+    Utiliza parámetros seguros (?) para prevenir inyecciones SQL.
+    Por defecto filtra solo clientes activos (activo = 1).
+    """
+    if not termino or not termino.strip():
+        return listar_clientes(conn, solo_activos=solo_activos)
+
+    cursor = conn.cursor()
+    patron = f"%{termino.strip()}%"
+    if solo_activos:
+        cursor.execute(
+            """
+            SELECT * FROM clientes
+            WHERE activo = 1 AND (nombre LIKE ? OR telefono LIKE ? OR direccion LIKE ?)
+            ORDER BY nombre ASC
+            """,
+            (patron, patron, patron),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT * FROM clientes
+            WHERE (nombre LIKE ? OR telefono LIKE ? OR direccion LIKE ?)
+            ORDER BY nombre ASC
+            """,
+            (patron, patron, patron),
+        )
+    return [_row_to_cliente(row) for row in cursor.fetchall()]
+
+
+def actualizar_cliente(
+    cliente_id: int,
+    conn: sqlite3.Connection,
+    nombre: Optional[str] = None,
+    telefono: Optional[str] = None,
+    direccion: Optional[str] = None,
+    nivel_vinculo: Optional[str] = None,
+    activo: Optional[int] = None,
+) -> Cliente:
+    """
+    Actualiza los datos modificables del cliente.
+    Valida que nivel_vinculo pertenezca a NIVELES_VINCULO_VALIDOS si se proporciona.
+    Valida activo in (0, 1) si se proporciona.
+    Retorna el dataclass Cliente actualizado.
+    NOTA: limite_credito NO se actualiza aquí (se gestiona exclusivamente vía pos_service.asignar_limite_credito).
+    saldo_actual NO se actualiza aquí (inmutable, solo vía cargos y abonos).
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"Cliente ID {cliente_id} no encontrado.")
+
+    nuevo_nombre = nombre.strip() if nombre is not None else row["nombre"]
+    if not nuevo_nombre:
+        raise ValueError("El nombre del cliente no puede estar vacío.")
+
+    nuevo_telefono = telefono.strip() if telefono is not None and telefono.strip() else (telefono if telefono is None else None)
+    if telefono is not None and not telefono.strip():
+        nuevo_telefono = None
+    elif telefono is None:
+        nuevo_telefono = row["telefono"]
+
+    nueva_direccion = direccion.strip() if direccion is not None and direccion.strip() else (direccion if direccion is None else None)
+    if direccion is not None and not direccion.strip():
+        nueva_direccion = None
+    elif direccion is None:
+        nueva_direccion = row["direccion"]
+
+    nuevo_nivel_vinculo = nivel_vinculo if nivel_vinculo is not None else row["nivel_vinculo"]
+    if nuevo_nivel_vinculo not in NIVELES_VINCULO_VALIDOS:
+        raise ValueError(
+            f"Nivel de vínculo '{nuevo_nivel_vinculo}' no válido. Debe ser uno de: {NIVELES_VINCULO_VALIDOS}."
+        )
+
+    nuevo_activo = activo if activo is not None else row["activo"]
+    if nuevo_activo not in (0, 1):
+        raise ValueError("El estado activo debe ser 0 o 1.")
+
+    try:
+        cursor.execute(
+            """
+            UPDATE clientes
+            SET nombre = ?, telefono = ?, direccion = ?, nivel_vinculo = ?, activo = ?
+            WHERE id = ?
+            """,
+            (nuevo_nombre, nuevo_telefono, nueva_direccion, nuevo_nivel_vinculo, nuevo_activo, cliente_id),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+    cursor.execute("SELECT * FROM clientes WHERE id = ?", (cliente_id,))
+    row_actualizada = cursor.fetchone()
+    return _row_to_cliente(row_actualizada)
+
+
+
 def registrar_cargo(
     cliente_id: int,
     monto: float,

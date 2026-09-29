@@ -146,6 +146,43 @@ def listar_productos(conn: sqlite3.Connection, solo_activos: bool = True) -> Lis
     return [_row_to_producto(row) for row in cursor.fetchall()]
 
 
+def buscar_productos(
+    termino: str,
+    conn: sqlite3.Connection,
+    solo_activos: bool = True,
+) -> List[Producto]:
+    """
+    Busca productos por coincidencia parcial en nombre o código de barras (RF-POS-01).
+    Utiliza parámetros seguros (?) para prevenir inyecciones SQL.
+    Por defecto filtra solo productos activos.
+    """
+    if not termino or not termino.strip():
+        return listar_productos(conn, solo_activos=solo_activos)
+
+    cursor = conn.cursor()
+    patron = f"%{termino.strip()}%"
+    if solo_activos:
+        cursor.execute(
+            """
+            SELECT * FROM productos
+            WHERE activo = 1 AND (nombre LIKE ? OR codigo_barras LIKE ?)
+            ORDER BY nombre ASC
+            """,
+            (patron, patron),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT * FROM productos
+            WHERE (nombre LIKE ? OR codigo_barras LIKE ?)
+            ORDER BY nombre ASC
+            """,
+            (patron, patron),
+        )
+    return [_row_to_producto(row) for row in cursor.fetchall()]
+
+
+
 def actualizar_producto(
     producto_id: int,
     conn: sqlite3.Connection,
