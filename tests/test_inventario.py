@@ -377,3 +377,32 @@ def test_buscar_productos_seguro(db_conn):
     res_todos = buscar_productos("Lenteja", db_conn, solo_activos=False)
     assert len(res_todos) == 2
 
+
+def test_ajustar_stock_auto_commit_delegado(db_conn):
+    """
+    Verifica que ajustar_stock respete el parámetro auto_commit:
+    - auto_commit=True: persiste inmediatamente en la conexión.
+    - auto_commit=False: delega la transacción al orquestador, permitiendo rollback.
+    """
+    prod = crear_producto(
+        nombre="Harina Pan 1kg",
+        categoria="canasta_basica",
+        precio_venta=3500.0,
+        costo=2800.0,
+        conn=db_conn,
+        stock=20.0,
+    )
+
+    # 1. auto_commit=True (por defecto)
+    ajustar_stock(prod.id, 5.0, db_conn, auto_commit=True)
+    p_actualizado = obtener_producto(prod.id, db_conn)
+    assert p_actualizado.stock == 25
+
+    # 2. auto_commit=False: si ocurre rollback, se deshace el ajuste
+    ajustar_stock(prod.id, -10.0, db_conn, auto_commit=False)
+    db_conn.rollback()
+
+    p_post_rollback = obtener_producto(prod.id, db_conn)
+    assert p_post_rollback.stock == 25  # Se revirtió el descuento de 10
+
+

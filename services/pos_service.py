@@ -226,6 +226,7 @@ def registrar_venta(
                     producto_id=it["producto_id"],
                     cantidad=-it["cantidad"],
                     conn=conn,
+                    auto_commit=False,
                 )
 
         # 2. Insertar cabecera de venta

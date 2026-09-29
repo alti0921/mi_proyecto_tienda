@@ -259,9 +259,12 @@ def ajustar_stock(
     producto_id: int,
     cantidad: float,
     conn: sqlite3.Connection,
+    auto_commit: bool = True,
 ) -> Producto:
     """
     Ajusta el stock de un producto sumando o restando una cantidad.
+    Si auto_commit es True, confirma o revierte la transacción internamente.
+    Si es False, delega el control transaccional al orquestador.
 
     Reglas operativas y política de redondeo:
     - Salidas / Ventas (cantidad < 0): Aplica math.floor(nuevo_stock)
@@ -294,10 +297,18 @@ def ajustar_stock(
             f"Disponible: {int(row['stock'])}, solicitado: {abs(int(cantidad))}."
         )
 
-    cursor.execute(
-        "UPDATE productos SET stock = ? WHERE id = ?",
-        (stock_final, producto_id),
-    )
+    try:
+        cursor.execute(
+            "UPDATE productos SET stock = ? WHERE id = ?",
+            (stock_final, producto_id),
+        )
+        if auto_commit:
+            conn.commit()
+    except Exception as e:
+        if auto_commit:
+            conn.rollback()
+        raise e
+
     return Producto(
         id=producto_id,
         codigo_barras=row["codigo_barras"],
