@@ -10,7 +10,8 @@ from ui.pantallas.login import PantallaLogin
 from ui.pantallas.pos import PantallaPOS
 from ui.pantallas.perfil_cliente import PantallaPerfilCliente
 from ui.pantallas.inventario import PantallaInventario
-from services import cxc_service, pos_service, scoring_service, inventario_service
+from ui.pantallas.reportes import PantallaReportes
+from services import cxc_service, pos_service, scoring_service, inventario_service, reportes_service
 
 
 def test_sesion_actual_ciclo_de_vida(db_conn):
@@ -848,6 +849,178 @@ def test_inventario_badge_global_y_resaltado_ambar_stock_bajo(ui_app):
     inv.var_filtro_stock.set("todos")
     inv._filtrar_catalogo()
     assert len(inv.tree_catalogo.get_children()) > len(filas_filtradas)
+
+
+def test_reportes_bloqueo_reactivo_pestana_cartera_admin_vs_vendedor(ui_app):
+    """
+    Verifica que la Pestaña 2 (Cartera / CxC) se bloquee reactivamente en caliente
+    para usuarios vendedores (state='disabled') y fuerce la selección a la Pestaña 1,
+    mientras que para administradores conmute a state='normal'.
+    """
+    login_frame: PantallaLogin = ui_app.pantallas["login"]
+    rep: PantallaReportes = ui_app.pantallas["reportes"]
+
+    # 1. Sesión como Admin
+    ui_app.navegar_a("login")
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "admin")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "admin123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("reportes")
+    # Para Admin, la pestaña de cartera debe estar habilitada
+    assert str(rep.notebook.tab(rep.tab_cartera, "state")) == "normal"
+    # Admin puede seleccionar la pestaña de cartera
+    rep.notebook.select(rep.tab_cartera)
+    assert rep.notebook.select() == str(rep.tab_cartera)
+
+    # 2. Cierre de sesión y login como Vendedor
+    ui_app.cerrar_sesion()
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "vendedor")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "vend123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("reportes")
+    # Para Vendedor, la pestaña de cartera debe bloquearse en caliente
+    assert str(rep.notebook.tab(rep.tab_cartera, "state")) == "disabled"
+    # La selección debe haberse forzado a la Pestaña 1 (Arqueo Diario)
+    assert rep.notebook.select() == str(rep.tab_arqueo)
+
+
+def test_reportes_arqueo_diario_calculo_caja_fisica_y_kpis(ui_app):
+    """
+    Verifica el cálculo y despliegue del Arqueo Diario (RF-REP-01):
+    Fórmula de caja física: ventas_efectivo + anticipos_credito + abonos_cxc.
+    """
+    conn = ui_app.sesion.conn
+    rep: PantallaReportes = ui_app.pantallas["reportes"]
+
+    # Iniciar sesión como admin para registrar operaciones si es necesario
+    if not ui_app.sesion.esta_autenticado:
+        admin_user = Usuario(id=1, username="admin", nombre="Administrador", rol="admin", activo=True)
+        ui_app.sesion.iniciar_sesion(admin_user)
+
+    # Crear cliente para operaciones
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Prueba Arqueo",
+        conn=conn,
+        limite_credito=1500.0,
+    )
+
+    # Medir estado previo del día para aislar la prueba de tests anteriores en el mismo fixture
+    datos_previos = reportes_service.obtener_arqueo_diario("now", conn)
+    efectivo_ant = datos_previos["ventas_efectivo"]
+    nequi_ant = datos_previos["ventas_nequi"]
+    credito_ant = datos_previos["ventas_credito"]
+    abonos_ant = datos_previos["abonos_cxc"]
+    caja_ant = datos_previos["total_efectivo_en_caja"]
+
+    # 1. Registrar venta contado en efectivo ($100.00)
+    pos_service.registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=[pos_service.LineaVentaInput(cantidad=1.0, precio_unitario=100.0, descripcion="Venta Ef")],
+        conn=conn,
+        monto_pagado=100.0,
+    )
+
+    # 2. Registrar venta contado Nequi ($50.00)
+    pos_service.registrar_venta(
+        usuario_id=1,
+        tipo_pago="nequi",
+        items=[pos_service.LineaVentaInput(cantidad=1.0, precio_unitario=50.0, descripcion="Venta Nequi")],
+        conn=conn,
+        monto_pagado=50.0,
+    )
+
+    # 3. Registrar venta a crédito ($200.00 con anticipo de $60.00 en efectivo)
+    pos_service.registrar_venta(
+        usuario_id=1,
+        tipo_pago="credito",
+        items=[pos_service.LineaVentaInput(cantidad=1.0, precio_unitario=200.0, descripcion="Venta Cred")],
+        conn=conn,
+        cliente_id=cli.id,
+        monto_pagado=60.0,
+    )
+
+    # 4. Registrar abono a cartera de $40.00 en efectivo
+    cxc_service.registrar_abono(
+        cliente_id=cli.id,
+        monto=40.0,
+        conn=conn,
+        descripcion="Abono prueba arqueo",
+    )
+
+    # Efectivo esperado en caja física: anticipo ($60) + efectivo ($100) + abono ($40) = +$200.00
+    ui_app.navegar_a("reportes")
+    rep._establecer_fecha_hoy()
+
+    assert f"${efectivo_ant + 100.0:,.2f}" in rep.lbl_kpi_v_efectivo.cget("text")
+    assert f"${nequi_ant + 50.0:,.2f}" in rep.lbl_kpi_v_nequi.cget("text")
+    assert f"${credito_ant + 140.0:,.2f}" in rep.lbl_kpi_v_credito.cget("text")  # 200 - 60 neto financiado
+    assert f"${abonos_ant + 40.0:,.2f}" in rep.lbl_kpi_abonos.cget("text")
+    assert f"${caja_ant + 200.0:,.2f}" in rep.lbl_kpi_total_caja.cget("text")
+
+    # Verificar que el Treeview contiene las transacciones
+    items_tree = rep.tree_arqueo.get_children()
+    assert len(items_tree) >= 4
+
+
+def test_reportes_consolidado_cartera_filtros_memoria_y_colores(ui_app):
+    """
+    Verifica el consolidado de cartera (RF-REP-02):
+    - Carga de tarjetas de resumen por banda reutilizando COLORES_SCORING.
+    - Filtros en memoria por clase y por rango de mora sin peticiones SQL adicionales.
+    """
+    login_frame: PantallaLogin = ui_app.pantallas["login"]
+    rep: PantallaReportes = ui_app.pantallas["reportes"]
+
+    # Iniciar sesión como Admin
+    ui_app.navegar_a("login")
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "admin")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "admin123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("reportes")
+    rep.notebook.select(rep.tab_cartera)
+    rep._cargar_consolidado_cartera()
+
+    # Verificar tarjetas de banda
+    assert "$" in rep.lbl_b_vigente.cget("text")
+    assert "$" in rep.lbl_b_preventiva.cget("text")
+    assert "$" in rep.lbl_b_congelada.cget("text")
+    assert "$" in rep.lbl_b_critica.cget("text")
+    assert "$" in rep.lbl_b_total.cget("text")
+
+    # Verificar que existen deudores en caché
+    assert len(rep._deudores_cache) >= 1
+
+    # Filtro en memoria por Clase D
+    rep.combo_filtro_clase.set("Clase D")
+    rep._aplicar_filtros_cartera_en_memoria()
+    for row in rep.tree_cartera.get_children():
+        valores = rep.tree_cartera.item(row, "values")
+        assert valores[3] == "D"  # Columna clase
+
+    # Filtro en memoria por Mora
+    rep.combo_filtro_clase.set("Todas")
+    rep.combo_filtro_mora.set("> 10 días")
+    rep._aplicar_filtros_cartera_en_memoria()
+    for row in rep.tree_cartera.get_children():
+        valores = rep.tree_cartera.item(row, "values")
+        assert "días" in valores[2]
+
+    # Restaurar filtros
+    rep.combo_filtro_clase.set("Todas")
+    rep.combo_filtro_mora.set("Todos")
+    rep._aplicar_filtros_cartera_en_memoria()
+    assert len(rep.tree_cartera.get_children()) == len(rep._deudores_cache)
+
 
 
 
