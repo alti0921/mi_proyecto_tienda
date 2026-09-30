@@ -9,7 +9,8 @@ from ui.app import App
 from ui.pantallas.login import PantallaLogin
 from ui.pantallas.pos import PantallaPOS
 from ui.pantallas.perfil_cliente import PantallaPerfilCliente
-from services import cxc_service, pos_service, scoring_service
+from ui.pantallas.inventario import PantallaInventario
+from services import cxc_service, pos_service, scoring_service, inventario_service
 
 
 def test_sesion_actual_ciclo_de_vida(db_conn):
@@ -613,5 +614,240 @@ def test_perfil_cliente_historial_inmutable_y_cascada_abono(ui_app):
 
     # 4. Comprobante digital
     cxc_frame._ver_comprobante()
+
+
+def test_perfil_cliente_cambio_vinculo_recalcula_score_en_caliente(ui_app):
+    """
+    Verifica que al editar el nivel_vinculo de un cliente (ej. de solo_apodo a registro_completo),
+    _guardar_datos_cliente() recalcula inmediatamente el Score y la Clase de Riesgo en caliente
+    sin necesidad de reiniciar o recargar la pantalla.
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Vinculo Dinamico",
+        conn=conn,
+        nivel_vinculo="solo_apodo",
+        limite_credito=1000.0,
+    )
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    # 1. Con solo_apodo en Cold-Start, sw3 = 20 pts y clase C
+    assert "Score: 20 / 100" in cxc_frame.lbl_score_valor.cget("text")
+    assert "Clase C" in cxc_frame.lbl_badge_clase.cget("text")
+
+    # 2. Modificar vínculo a registro_completo
+    cxc_frame.combo_vinculo.set("registro_completo")
+    cxc_frame._guardar_datos_cliente()
+
+    # 3. El Score se actualiza de inmediato en caliente a 100 pts y Clase A
+    assert cxc_frame.area_error_datos.tiene_error() is False
+    assert "Score: 100 / 100" in cxc_frame.lbl_score_valor.cget("text")
+    assert "Clase A" in cxc_frame.lbl_badge_clase.cget("text")
+
+    # Verificar persistencia en base de datos
+    cli_bd = cxc_service.obtener_cliente(cli.id, conn)
+    assert cli_bd.nivel_vinculo == "registro_completo"
+
+
+def test_inventario_maestro_detalle_y_seleccion(ui_app):
+    """
+    Verifica el patrón Maestro-Detalle de PantallaInventario:
+    al seleccionar una fila en el catálogo, se cargan automáticamente
+    los datos en los formularios de edición y ajuste sin modales invasivos.
+    """
+    ui_app.navegar_a("inventario")
+    inv: PantallaInventario = ui_app.pantallas["inventario"]
+
+    # Catálogo cargado con productos semilla
+    items = inv.tree_catalogo.get_children()
+    assert len(items) >= 3
+
+    # Seleccionar el primer producto del catálogo ordenado
+    primer_item = items[0]
+    valores = inv.tree_catalogo.item(primer_item, "values")
+    nombre_esperado = valores[2]
+    cat_esperada = valores[3]
+
+    inv.tree_catalogo.selection_set(primer_item)
+    inv._on_producto_seleccionado()
+
+    assert inv._producto_seleccionado is not None
+    assert inv._producto_seleccionado.nombre == nombre_esperado
+
+    # Verificar que el formulario de edición y ajuste se poblaron
+    assert inv.entry_edit_nombre.get() == nombre_esperado
+    assert inv.combo_edit_cat.get() == cat_esperada
+    assert nombre_esperado in inv.lbl_info_prod_ajuste.cget("text")
+
+
+def test_inventario_creacion_edicion_y_desactivacion_admin_only(ui_app):
+    """
+    Verifica los permisos por rol en PantallaInventario:
+    - Admin: Habilitado para crear, editar y desactivar.
+    - Vendedor: Inhabilitado (disabled) para crear, editar y desactivar.
+    """
+    login_frame: PantallaLogin = ui_app.pantallas["login"]
+    inv: PantallaInventario = ui_app.pantallas["inventario"]
+
+    # 1. Sesión como Administrador
+    ui_app.navegar_a("login")
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "admin")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "admin123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("inventario")
+    assert str(inv.btn_guardar_crear["state"]) == "normal"
+    assert str(inv.btn_guardar_edit["state"]) == "normal"
+    assert str(inv.btn_desactivar["state"]) == "normal"
+
+    # Crear producto nuevo como Admin
+    inv.entry_crear_nombre.delete(0, tk.END)
+    inv.entry_crear_nombre.insert(0, "Pan Integral de Centeno")
+    inv.combo_crear_cat.set("canasta_basica")
+    inv.entry_crear_precio.delete(0, tk.END)
+    inv.entry_crear_precio.insert(0, "32.00")
+    inv.entry_crear_costo.delete(0, tk.END)
+    inv.entry_crear_costo.insert(0, "20.00")
+    inv.entry_crear_stock.delete(0, tk.END)
+    inv.entry_crear_stock.insert(0, "25")
+    inv.entry_crear_stock_min.delete(0, tk.END)
+    inv.entry_crear_stock_min.insert(0, "5")
+
+    inv._crear_producto()
+    assert inv.area_error_crear.tiene_error() is False
+    assert "creado exitosamente" in inv.lbl_exito_crear.cget("text")
+
+    # Editar el producto recién creado
+    assert inv._producto_seleccionado is not None
+    nuevo_id = inv._producto_seleccionado.id
+    inv.entry_edit_precio.delete(0, tk.END)
+    inv.entry_edit_precio.insert(0, "38.50")
+    inv._guardar_edicion()
+
+    assert inv.area_error_edit.tiene_error() is False
+    assert "actualizado" in inv.lbl_exito_edit.cget("text")
+    prod_bd = inventario_service.obtener_producto(nuevo_id, ui_app.sesion.conn)
+    assert prod_bd.precio_venta == 38.50
+
+    # Desactivar producto como Admin (Baja Lógica)
+    inv._desactivar_producto()
+    assert inv.area_error_edit.tiene_error() is False
+    assert "desactivado" in inv.lbl_exito_edit.cget("text")
+    assert inventario_service.obtener_producto(nuevo_id, ui_app.sesion.conn) is None
+
+    # 2. Sesión como Vendedor (Botones de Admin se inhabilitan)
+    ui_app.cerrar_sesion()
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "vendedor")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "vend123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("inventario")
+    assert str(inv.btn_guardar_crear["state"]) == "disabled"
+    assert str(inv.btn_guardar_edit["state"]) == "disabled"
+    assert str(inv.btn_desactivar["state"]) == "disabled"
+
+
+def test_inventario_ajuste_stock_vendedor_y_admin_stepper_con_signo(ui_app):
+    """
+    Verifica el flujo de ajuste de stock (RS-05):
+    - Habilitado para rol Vendedor (y Admin).
+    - Combinación de dirección y magnitud entera con signo.
+    - Rechazo delegado al backend en salidas que superan el stock.
+    """
+    ui_app.navegar_a("inventario")
+    inv: PantallaInventario = ui_app.pantallas["inventario"]
+
+    # El botón de ajuste de stock permanece SIEMPRE habilitado para vendedores
+    assert str(inv.btn_confirmar_ajuste["state"]) == "normal"
+
+    # Seleccionar Aceite Vegetal (Stock inicial = 50)
+    items = inv.tree_catalogo.get_children()
+    item_aceite = next(i for i in items if "Aceite" in inv.tree_catalogo.item(i, "values")[2])
+    inv.tree_catalogo.selection_set(item_aceite)
+    inv._on_producto_seleccionado()
+
+    aceite_id = inv._producto_seleccionado.id
+    stock_inicial = inv._producto_seleccionado.stock
+
+    # 1. Ajuste de Entrada (+10)
+    inv.var_direccion_ajuste.set("entrada")
+    inv.spin_magnitud.set(10)
+    inv._confirmar_ajuste_stock()
+
+    assert inv.area_error_ajuste.tiene_error() is False
+    assert inv._producto_seleccionado.stock == stock_inicial + 10
+
+    # 2. Ajuste de Salida (-15)
+    inv.var_direccion_ajuste.set("salida")
+    inv.spin_magnitud.set(15)
+    inv._confirmar_ajuste_stock()
+
+    assert inv.area_error_ajuste.tiene_error() is False
+    assert inv._producto_seleccionado.stock == stock_inicial + 10 - 15
+
+    # 3. Ajuste de Salida que supera el stock -> Rechazo del backend
+    inv.var_direccion_ajuste.set("salida")
+    inv.spin_magnitud.set(999)
+    inv._confirmar_ajuste_stock()
+
+    assert inv.area_error_ajuste.tiene_error() is True
+    assert "insuficiente" in inv.area_error_ajuste.lbl_texto.cget("text").lower()
+
+
+def test_inventario_badge_global_y_resaltado_ambar_stock_bajo(ui_app):
+    """
+    Verifica:
+    - Resaltado en fila ámbar (#fff3cd) cuando stock <= stock_minimo.
+    - Badge global numérico en la cabecera.
+    - Filtro de catálogo por solo productos en stock bajo.
+    """
+    ui_app.navegar_a("inventario")
+    inv: PantallaInventario = ui_app.pantallas["inventario"]
+    conn = ui_app.sesion.conn
+
+    # Crear producto en alerta de stock (stock=2, stock_minimo=5)
+    prod_alerta = inventario_service.crear_producto(
+        nombre="Leche Deslactosada 1L",
+        categoria="canasta_basica",
+        precio_venta=28.0,
+        costo=18.0,
+        conn=conn,
+        stock=2,
+        stock_minimo=5,
+    )
+
+    inv._refrescar_todo(mantener_id=prod_alerta.id)
+
+    # 1. Badge global refleja alertas activas
+    assert "Stock Bajo" in inv.lbl_badge_alerta.cget("text")
+    assert "0" not in inv.lbl_badge_alerta.cget("text")
+
+    # 2. Resaltado en tag 'alerta_stock' (#fff3cd) en la fila del producto
+    seleccion = inv.tree_catalogo.selection()
+    assert seleccion
+    tags_fila = inv.tree_catalogo.item(seleccion[0], "tags")
+    assert "alerta_stock" in tags_fila
+
+    # 3. Filtro por 'alerta'
+    inv.var_filtro_stock.set("alerta")
+    inv._filtrar_catalogo()
+
+    filas_filtradas = inv.tree_catalogo.get_children()
+    assert len(filas_filtradas) >= 1
+    for f in filas_filtradas:
+        assert "alerta_stock" in inv.tree_catalogo.item(f, "tags")
+
+    # Restaurar filtro a 'todos'
+    inv.var_filtro_stock.set("todos")
+    inv._filtrar_catalogo()
+    assert len(inv.tree_catalogo.get_children()) > len(filas_filtradas)
+
 
 
