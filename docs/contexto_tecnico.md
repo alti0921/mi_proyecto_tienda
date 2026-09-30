@@ -3,10 +3,10 @@
 **Proyecto:** Desarrollo de un sistema de información con motor analítico de scoring crediticio para la gestión operativa y financiera de micronegocios minoristas de Barranquilla
 **Autores:** Altime Andrés Heredia Jaimes, Andrés Felipe Segura Angulo
 **Repositorio:** `alti0921/mi_proyecto_tienda`
-**Última actualización de este documento:** 2026-09-29
+**Última actualización de este documento:** 2026-09-30
 **Propósito:** Consolidar el estado técnico completo del proyecto en un solo documento, para que cualquier sesión futura (con Claude, con Gemini/Antigravity, o con los propios estudiantes) tenga el contexto necesario sin tener que re-derivarlo desde cero.
 
-> ⚠️ **Regla de oro para cualquier IA o desarrollador que continúe este proyecto:** antes de escribir código nuevo, leer este documento completo, en particular la Sección 4 (reglas y parches ya corregidos) y la Sección 8 (wireframes de Fase 2, con controles y permisos por rol). No repetir bugs ya corregidos aquí.
+> ⚠️ **Regla de oro para cualquier IA o desarrollador que continúe este proyecto:** antes de escribir código nuevo, leer este documento completo, en particular la Sección 4 (reglas y parches ya corregidos), la Sección 8 (wireframes de Fase 2, con controles y permisos por rol) y la Sección 10 (arquitectura real de `/ui` y el patrón de rol reactivo). No repetir bugs ya corregidos aquí.
 
 ---
 
@@ -20,9 +20,10 @@
 | **Fase 2** — Diseño de arquitectura | Blueprint de Arquitectura (4 capas), Modelo Entidad-Relación (E-R) | ✅ Completa |
 | **Fase 2** — Wireframes | 5 pantallas: Login, POS, Perfil cliente/CxC, Inventario, Reportes — documento `Wireframes_Fase2.docx` con diagramas de caja, tabla de trazabilidad RF por componente y permisos por rol | ✅ **Completa y cerrada formalmente** |
 | **Fase 3** — Construcción modular (backend) | `db/schema.sql`, `/models`, `services/scoring_service.py`, `services/inventario_service.py`, `services/cxc_service.py`, `services/pos_service.py`, `services/auth_service.py`, `services/reportes_service.py`, `tests/` | ✅ Auditado, corregido y con **57/57 tests en verde** |
-| **Fase 3** — Construcción de interfaz | `/ui` (Tkinter), consumiendo exclusivamente las funciones públicas ya auditadas de `/services` | ❌ Pendiente — **luz verde otorgada para iniciar, con los wireframes de la Sección 8 como especificación de referencia** |
+| **Fase 3** — Construcción de interfaz | `/ui` (Tkinter): `app.py`, `sesion.py`, `estilos.py`, `widgets_comunes.py` y las 5 pantallas (`login.py`, `pos.py`, `perfil_cliente.py`, `inventario.py`, `reportes.py`) | ✅ **Completa y cerrada formalmente — 79/79 tests en verde** (ver Sección 10) |
+| **Fase 3** — Pendiente no bloqueante | Exportación real de comprobante en PDF (RF-CXC-04), vía `services/reportes_service.py` (probablemente `reportlab`) | ❌ Pendiente — hoy la UI usa un visor modal de texto formateado como stub |
 
-**Nota de clasificación de fases:** el código ya construido (`schema.sql`, `/models`, `/services`, `/tests`) técnicamente pertenece a Fase 3 (Construcción modular), no a los entregables formales de Fase 2. El Blueprint, el E-R y los wireframes son los tres entregables de Fase 2, y los tres están cerrados. El backend se trata como "avance de Fase 3 fundamentado en un diseño de Fase 2 ya formalizado".
+**Nota de clasificación de fases:** el código ya construido (`schema.sql`, `/models`, `/services`, `/tests`, `/ui`) técnicamente pertenece a Fase 3 (Construcción modular), no a los entregables formales de Fase 2. El Blueprint, el E-R y los wireframes son los tres entregables de Fase 2, y los tres están cerrados. El backend y la interfaz gráfica se tratan como "avance de Fase 3 fundamentado en un diseño de Fase 2 ya formalizado".
 
 ### 1.2 Módulos de código finalizados y verificados
 
@@ -36,7 +37,8 @@
 | `services/pos_service.py` | ✅ Auditado y corregido — **backend de ventas completo** | `tests/test_pos.py` — 12 tests |
 | `services/auth_service.py` | ✅ Construido y auditado — hash SHA-256 + salt, `COLLATE NOCASE` | `tests/test_auth.py` — 8 tests |
 | `services/reportes_service.py` | ✅ Construido y auditado — reutiliza umbrales de `scoring_service` como única fuente de verdad | `tests/test_reportes.py` — 4 tests |
-| **Total suite** | ✅ **57/57 passed** | Confirmado en terminal (pytest 9.1.1, Python 3.12.10), commit `1b04de5` en `master` |
+| `ui/*.py` (5 pantallas + andamiaje) | ✅ Construido y auditado (ver Sección 10) | `tests/test_ui.py` — 22 tests |
+| **Total suite** | ✅ **79/79 passed** | Confirmado en terminal (pytest 9.1.1, Python 3.12.10), commit `1185ac9` en `master` |
 
 ### 1.3 Documentos de Fase 2 entregados
 
@@ -479,6 +481,7 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
 | 16 | **`autenticar_usuario()` sin `COLLATE NOCASE`**: `username.strip().lower()` comparado contra columna case-sensitive — un username futuro con mayúsculas quedaría inaccesible | `COLLATE NOCASE` agregado a `usuarios.username` en `db/schema.sql` | Confirmado en schema y suite 48/48 (momento de la introducción de `auth_service.py`) |
 | 17 | **`ajustar_stock()` no seguía la convención transversal de `auto_commit`**: la primera versión delegaba el commit siempre al caller, sin exponer el parámetro — riesgo de que una llamada aislada futura (p. ej. desde Inventario) olvidara el `conn.commit()` manual y el ajuste no persistiera en disco | Estandarizado `auto_commit: bool = True`; `pos_service.registrar_venta()` lo fija en `False` explícitamente | Test `test_ajustar_stock_auto_commit_delegado` (commit `09fa84c`) |
 | 18 | **`desactivar_producto()` retornaba `bool`** en vez de excepción: un `False` (producto no encontrado) no caía en el manejo genérico de `ValueError` del controlador de UI, arriesgando un fallo silencioso en el botón "Desactivar" | Migrado a `ValueError(f"Producto ID {producto_id} no encontrado o inactivo.")`, unificando con `actualizar_producto`, `actualizar_cliente` y `asignar_limite_credito` | Confirmado por Antigravity, incluido en la suite 57/57 |
+| 19 | **(Patrón de `/ui`, no de `/services`) Restricciones de rol evaluadas una sola vez al construir el `Frame`**: el patrón multi-frame apilado (Sección 10) crea las 5 pantallas **una sola vez** y las reutiliza con `.tkraise()`. Si un widget restringido por rol (`BotonRestringidoPorRol`, la pestaña "Cartera/CxC") solo evaluara `sesion.usuario_actual.rol` en su `__init__`, un segundo login con otro rol **dentro de la misma ejecución de la app** (sin reiniciar el proceso) dejaría el control con el permiso del primer usuario | Se estandarizó un hook `al_mostrar()` invocado por `App.navegar_a()` en cada navegación, que dispara `BotonRestringidoPorRol.actualizar_estado()` y el bloqueo/desbloqueo de pestañas del `ttk.Notebook` de Reportes — la restricción se re-evalúa en caliente en cada entrada a la pantalla, nunca una sola vez | Tests `test_cambio_de_usuario_actualiza_permisos_en_caliente` y `test_reportes_bloqueo_reactivo_pestana_cartera_admin_vs_vendedor`, ambos simulando login→logout→login con rol distinto en la misma instancia de `App` |
 
 ---
 
@@ -585,18 +588,66 @@ Documento completo: título + 5 pantallas, cada una con diagrama de caja de baja
 
 ---
 
-## 9. Siguiente paso: Fase 3 — Implementación de `/ui` (Tkinter)
+## 9. ✅ Fase 3 — Backend certificado (57/57) como base de la construcción de `/ui`
 
-**Backend 100% cerrado (57/57 tests en verde):** `db/schema.sql`, `/models`, `scoring_service.py`, `inventario_service.py`, `cxc_service.py`, `pos_service.py`, `auth_service.py` y `reportes_service.py` — todos auditados línea por línea, con atomicidad verificada de punta a punta (`auto_commit` estandarizado en las 4 funciones transaccionales) y sin ninguna vía de bypass de las reglas de negocio (RF-SCR-03/04, RF-CXC-06).
+**Backend 100% cerrado:** `db/schema.sql`, `/models`, `scoring_service.py`, `inventario_service.py`, `cxc_service.py`, `pos_service.py`, `auth_service.py` y `reportes_service.py` — todos auditados línea por línea, con atomicidad verificada de punta a punta (`auto_commit` estandarizado en las 4 funciones transaccionales) y sin ninguna vía de bypass de las reglas de negocio (RF-SCR-03/04, RF-CXC-06).
 
 **Fase 2 100% cerrada:** Blueprint, E-R y las 5 pantallas de `Wireframes_Fase2.docx`, con cada componente trazado a su RF y a la función pública de `/services` que lo satisface (ver Sección 8).
 
-**Pasos de Fase 3:**
-1. Construir `/ui` en Tkinter, pantalla por pantalla, siguiendo literalmente la estructura, controles y permisos por rol ya definidos y aprobados en `Wireframes_Fase2.docx` (Sección 8 de este documento).
-2. Cada pantalla consume exclusivamente las funciones públicas ya auditadas de `/services` — la UI **no debe reimplementar ninguna validación de negocio** (límites de cupo, clases de riesgo, atomicidad, redondeo de stock). Solo captura eventos, llama a los servicios y muestra resultados/errores (el texto de los `ValueError` se despliega tal cual en las áreas rojas ya diagramadas).
-3. El control de acceso por rol (botones/pestañas deshabilitados) se implementa a nivel de UI, leyendo `Usuario.rol` retornado por `auth_service.autenticar_usuario()` — la capa de servicios no valida rol por sí misma salvo donde ya está probado (ninguna función de `/services` actual recibe `rol` como parámetro; la UI decide qué mostrar/habilitar).
-4. Pendiente para Fase 3 (no bloqueante para arrancar Tkinter): construir `services/reportes_service.py` → función de exportación de comprobante PDF (RF-CXC-04), probablemente con `reportlab`, referenciada en el wireframe de Perfil/CxC como stub.
+Sobre esta base se construyó `/ui` (Tkinter), documentada completa en la Sección 10.
 
 ---
 
-*Última actualización: cierre formal de Fase 2 (Blueprint + E-R + 5 wireframes validados y auditados contra backend), consolidación de `auth_service.py` y `reportes_service.py`, estandarización completa de `auto_commit` y manejo de errores vía `ValueError`. Suite completa: 57/57 tests en verde. Generado por Claude a partir de la auditoría acumulada del proyecto.*
+## 10. ✅ Fase 3 — `/ui` en Tkinter, construida y certificada (79/79 tests en verde)
+
+Las 5 pantallas se construyeron en 5 hitos incrementales (Login → POS → Perfil/CxC → Inventario → Reportes), cada uno auditado por Claude contra los wireframes de la Sección 8 antes de aprobar el siguiente. Commits de referencia: `ac2f1d5` (Hito 1), `39fee6b` (Hito 2), `360d2c5` (Hito 3), `8afdd22` (Hito 4), `1185ac9` (Hito 5).
+
+### 10.1 Estructura de archivos
+
+```
+ui/
+├── app.py                 # Ventana raíz (tk.Tk), conn persistente, SesionActual única,
+│                           # stack multi-frame apilado, App.navegar_a(nombre) -> hook al_mostrar() + tkraise()
+├── sesion.py               # SesionActual(conn): usuario_actual, iniciar_sesion()/cerrar_sesion(),
+│                           # @property es_admin, @property rol_actual
+├── estilos.py              # Paleta centralizada (ttk.Style): COLORES_SCORING (A/B/C/D),
+│                           # colores de error/alerta, tipografía Segoe UI
+├── widgets_comunes.py       # AreaError, BotonRestringidoPorRol, BarraSuperior (todas reutilizadas
+│                           # sin modificación en las 5 pantallas)
+└── pantallas/
+    ├── login.py             # RF-AUT-01
+    ├── pos.py                # RF-POS-01 a 04, RF-CXC-05/06, RF-SCR-03/04
+    ├── perfil_cliente.py     # RF-CXC-01 a 06, RF-SCR-01 a 06
+    ├── inventario.py         # RF-INV-01 a 03, RS-05
+    └── reportes.py           # RF-REP-01, RF-REP-02
+```
+
+### 10.2 Decisión arquitectónica clave: sin capa `/controladores` separada
+
+Cada `Pantalla*` es un único `tk.Frame` que actúa como vista **y** manejador de evento. La lógica de negocio vive 100% en `/services`; el `Frame` solo arma el payload, llama la función, y en un `try/except ValueError` vuelca el resultado o el mensaje de error en su `AreaError`. Confirmado en la práctica a lo largo de los 5 hitos: ninguna pantalla necesitó una capa intermedia.
+
+### 10.3 Patrón de rol reactivo (la lección más importante de esta fase)
+
+El patrón de navegación es multi-frame **apilado y persistente**: las 5 pantallas se crean una sola vez al iniciar `App`, y `navegar_a()` solo hace `tkraise()` sobre instancias ya existentes. Esto significa que, dentro de una misma ejecución del programa, un segundo login con un rol distinto **reutiliza el mismo objeto `Frame`** que ya existía con el primer usuario.
+
+Por eso, **todo control restringido por rol se re-evalúa en cada navegación, nunca solo en su construcción**: `App.navegar_a()` invoca `pantalla.al_mostrar()` antes de `tkraise()`, y ese hook dispara `BotonRestringidoPorRol.actualizar_estado()` y el bloqueo/desbloqueo de la pestaña "Cartera/CxC" del `ttk.Notebook` en Reportes. Ver parche #19 (Sección 4) — este fue el hallazgo real más importante detectado durante la auditoría de `/ui`, verificado con pruebas dedicadas que simulan login→logout→login con rol distinto dentro de la misma instancia de `App`.
+
+### 10.4 Resumen por pantalla (comportamiento certificado, más allá de lo ya descrito en Sección 8)
+
+- **Login:** único punto que abre la `conn` compartida de la sesión; produce el `Usuario(rol)` que el resto de la app consume vía `sesion.usuario_actual`.
+- **POS:** carrito como lista en memoria (`self._carrito`, nunca leído desde el widget visual al confirmar); el badge de Clase de Riesgo/cupo en la ficha del cliente es **puramente informativo** — el botón "Confirmar Venta" permanece siempre `state="normal"`, y la única autoridad de rechazo es el `ValueError` que devuelve `pos_service.registrar_venta()` (verificado con `test_pos_boton_confirmar_activo_y_rechazo_clase_d_backend`). Tras cada venta: carrito vacío, catálogo y cupo del cliente refrescados.
+- **Perfil de Cliente/CxC:** formularios de ficha demográfica y de asignación de cupo desacoplados, cada uno con su propio manejador y `AreaError`. El badge Score/Clase se recalcula (`calcular_score()` + `aplicar_matriz_decision()` frescos) tanto tras un abono **como tras editar `nivel_vinculo`** (que alimenta `SW3` directamente) — verificado con `test_perfil_cliente_cambio_vinculo_recalcula_score_en_caliente`. Historial CxC sin ningún binding de edición/borrado.
+- **Inventario:** patrón maestro-detalle (`<<TreeviewSelect>>` alimenta los 3 bloques de acción); selector Entrada/Salida + magnitud del stepper se combinan en un entero con signo antes de llamar `ajustar_stock(..., auto_commit=True)`; categoría de producto restringida a `ttk.Combobox(state="readonly")`.
+- **Reportes:** `ttk.Notebook` con bloqueo reactivo de la pestaña Cartera/CxC (ver 10.3); Tab 1 se refresca al cambiar de fecha y al reentrar a la pestaña; Tab 2 hace una única consulta a `obtener_consolidado_cartera()` y filtra por clase/mora en memoria, sin golpear la base de datos por cada cambio de filtro.
+
+### 10.5 Suite de pruebas de interfaz (`tests/test_ui.py`) — 22 tests
+
+Cubren: ciclo de vida de `SesionActual`, comportamiento de `AreaError`, habilitación/deshabilitación de `BotonRestringidoPorRol`, inicialización y navegación de `App`, el flujo completo de Login, la conmutación de permisos en caliente entre roles, catálogo/carrito/ventas del POS (efectivo, Nequi y crédito con anticipo parcial), edición de ficha y recálculo de scoring en Perfil de Cliente, cascada completa tras un abono, maestro-detalle y ajuste de stock con signo en Inventario, y el bloqueo reactivo de pestaña más el cálculo de KPIs en Reportes.
+
+### 10.6 Único pendiente no bloqueante: RF-CXC-04 (comprobante en PDF real)
+
+La Pantalla 3 expone hoy un visor modal de texto formateado como stub del comprobante de abono. La exportación real a PDF requiere una función nueva en `services/reportes_service.py` (probablemente con `reportlab`), documentada desde la Sección 8.3 como pendiente de Fase 3. No bloquea el cierre de `/ui` ni el uso operativo del sistema.
+
+---
+
+*Última actualización: cierre formal de Fase 3 completa — backend (57/57) y `/ui` en Tkinter (79/79), las 5 pantallas construidas y auditadas hito a hito contra los wireframes de Fase 2, con el patrón de rol reactivo (parche #19) como hallazgo central de esta ronda. Único pendiente no bloqueante: exportación real a PDF (RF-CXC-04). Generado por Claude a partir de la auditoría acumulada del proyecto.*
