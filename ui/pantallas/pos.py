@@ -788,27 +788,12 @@ class PantallaPOS(tk.Frame):
             self.area_error.mostrar_error("El monto ingresado no es válido.")
             return
 
-        # Validaciones de interfaz antes de invocar el orquestador
-        if tipo_pago == "credito":
-            if not self._cliente_actual:
-                self.area_error.mostrar_error(
-                    "Debe seleccionar un cliente registrado para autorizar una venta a crédito."
-                )
-                return
-
-            if self._cliente_actual.categoria_riesgo == "D":
-                self.area_error.mostrar_error(
-                    "Crédito rechazado (RF-SCR-03): El cliente está en Clase D (Riesgo Crítico / Bloqueado)."
-                )
-                return
-
-            saldo_a_fiar = round(total - monto_pagado, 2)
-            if saldo_a_fiar > self._cliente_actual.cupo_disponible:
-                self.area_error.mostrar_error(
-                    f"Cupo insuficiente: El saldo a fiar (${saldo_a_fiar:,.2f}) excede el "
-                    f"cupo disponible (${self._cliente_actual.cupo_disponible:,.2f}) del cliente."
-                )
-                return
+        # Validaciones de interfaz: presencia de cliente si es venta a crédito
+        if tipo_pago == "credito" and not self._cliente_actual:
+            self.area_error.mostrar_error(
+                "Debe seleccionar un cliente registrado para autorizar una venta a crédito."
+            )
+            return
 
         # Construir líneas de venta
         items_pos: List[LineaVentaInput] = [

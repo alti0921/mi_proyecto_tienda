@@ -8,6 +8,8 @@ from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, BarraSuperior
 from ui.app import App
 from ui.pantallas.login import PantallaLogin
 from ui.pantallas.pos import PantallaPOS
+from ui.pantallas.perfil_cliente import PantallaPerfilCliente
+from services import cxc_service, pos_service, scoring_service
 
 
 def test_sesion_actual_ciclo_de_vida(db_conn):
@@ -386,4 +388,230 @@ def test_pos_venta_credito_validaciones_y_actualizacion_kpi(ui_app):
     assert pos._cliente_actual.cupo_disponible == round(cupo_antes - 80.0, 2)
     assert f"{pos._cliente_actual.saldo_actual:,.2f}" in pos.lbl_card_saldo.cget("text")
     assert f"{pos._cliente_actual.cupo_disponible:,.2f}" in pos.lbl_card_cupo.cget("text")
+
+
+def test_pos_boton_confirmar_activo_y_rechazo_clase_d_backend(ui_app):
+    """
+    Verifica la directriz estricta de arquitectura:
+    El botón 'Confirmar Venta' en la UI NUNCA se deshabilita por clase de riesgo;
+    permanece interactivo (state='normal') y el rechazo de crédito a un cliente
+    en Clase D es dictado por pos_service.registrar_venta() en el backend,
+    siendo capturado por el bloque try/except y desplegado en AreaError.
+    """
+    conn = ui_app.sesion.conn
+    cli_d = cxc_service.crear_cliente(
+        nombre="Cliente Moroso Bloqueado",
+        conn=conn,
+        nivel_vinculo="solo_apodo",
+        limite_credito=1000.0,
+    )
+    # Insertar cargo vencido con más de 30 días de mora
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO cuentas_por_cobrar (cliente_id, venta_id, tipo_movimiento, monto, saldo_resultante, descripcion, fecha_movimiento)
+        VALUES (?, NULL, 'cargo', 800.0, 800.0, 'Fiado antiguo vencido', datetime('now', '-35 days'))
+        """,
+        (cli_d.id,),
+    )
+    cursor.execute("UPDATE clientes SET saldo_actual = 800.0 WHERE id = ?", (cli_d.id,))
+    conn.commit()
+
+    # Verificar que el scoring del backend lo categoriza en Clase D
+    score, cat = scoring_service.calcular_score(cli_d.id, conn)
+    assert cat == "D"
+
+    # Navegar a POS y cargar cliente
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    pos.al_mostrar()
+
+    # Seleccionar al cliente moroso
+    etiqueta = f"{cli_d.nombre} (ID: {cli_d.id})"
+    assert etiqueta in pos._clientes_map
+    pos.combo_clientes.set(etiqueta)
+    pos._on_cliente_seleccionado()
+
+    # Agregar ítem al carrito y seleccionar crédito
+    pos._vaciar_carrito()
+    pos.entry_monto_directo.delete(0, tk.END)
+    pos.entry_monto_directo.insert(0, "50.00")
+    pos._agregar_monto_global()
+
+    pos.var_tipo_pago.set("credito")
+    pos._on_tipo_pago_cambiado()
+
+    # El botón 'Confirmar Venta' DEBE permanecer interactivo / habilitado
+    assert str(pos.btn_confirmar_venta["state"]) == "normal"
+
+    # Al confirmar, el rechazo proviene del backend capturado por try/except
+    pos._confirmar_venta()
+    assert pos.area_error.tiene_error() is True
+    assert "Clase D" in pos.area_error.lbl_texto.cget("text")
+    assert "bloqueado" in pos.area_error.lbl_texto.cget("text").lower()
+
+
+def test_perfil_cliente_cargar_y_editar_datos(ui_app):
+    """
+    Verifica la carga de ficha de cliente y la actualización independiente
+    de datos demográficos y nivel de vínculo (cxc_service.actualizar_cliente).
+    """
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+
+    # Cargar primer cliente (Doña María)
+    assert cxc_frame._cliente_actual is not None
+    cliente_id = cxc_frame._cliente_actual.id
+
+    # Modificar teléfono y dirección
+    cxc_frame.entry_telefono.delete(0, tk.END)
+    cxc_frame.entry_telefono.insert(0, "555-999-8877")
+    cxc_frame.entry_direccion.delete(0, tk.END)
+    cxc_frame.entry_direccion.insert(0, "Calle Nueva #456")
+    cxc_frame.combo_vinculo.set("registro_completo")
+
+    # Guardar cambios
+    cxc_frame._guardar_datos_cliente()
+
+    assert cxc_frame.area_error_datos.tiene_error() is False
+    assert "guardados exitosamente" in cxc_frame.lbl_exito_datos.cget("text")
+
+    # Verificar persistencia en base de datos
+    cli_bd = cxc_service.obtener_cliente(cliente_id, ui_app.sesion.conn)
+    assert cli_bd.telefono == "555-999-8877"
+    assert cli_bd.direccion == "Calle Nueva #456"
+    assert cli_bd.nivel_vinculo == "registro_completo"
+
+
+def test_perfil_cliente_asignacion_cupo_rol_admin_vs_vendedor(ui_app):
+    """
+    Verifica la asignación de límite de crédito con separación de formulario
+    y restricción estricta de rol (admin habilitado vs vendedor deshabilitado).
+    """
+    login_frame: PantallaLogin = ui_app.pantallas["login"]
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+
+    # 1. Como Administrador
+    ui_app.navegar_a("login")
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "admin")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "admin123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("cxc")
+    assert ui_app.sesion.es_admin is True
+    assert str(cxc_frame.btn_asignar_cupo["state"]) == "normal"
+
+    # Asignar nuevo cupo de 3500.00
+    cxc_frame.entry_nuevo_cupo.delete(0, tk.END)
+    cxc_frame.entry_nuevo_cupo.insert(0, "3500.00")
+    cxc_frame._asignar_cupo()
+
+    assert cxc_frame.area_error_cupo.tiene_error() is False
+    assert "actualizado a $3,500.00" in cxc_frame.lbl_exito_cupo.cget("text")
+    assert cxc_frame._cliente_actual.limite_credito == 3500.00
+
+    # 2. Como Vendedor (El botón debe inhabilitarse)
+    ui_app.cerrar_sesion()
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "vendedor")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "vend123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("cxc")
+    assert ui_app.sesion.es_admin is False
+    assert str(cxc_frame.btn_asignar_cupo["state"]) == "disabled"
+
+
+def test_perfil_cliente_cold_start_sugerencia_no_persistida_automaticamente(ui_app):
+    """
+    Verifica que el protocolo Cold-Start funcione como sugerencia informativa:
+    se precarga en el entry pero NO se persiste en la BD hasta confirmación explícita.
+    """
+    conn = ui_app.sesion.conn
+    cli_nuevo = cxc_service.crear_cliente(
+        nombre="Cliente Cold Start Test",
+        conn=conn,
+        nivel_vinculo="conocido_referido",
+        limite_credito=0.0,
+    )
+    assert cli_nuevo.limite_credito == 0.0
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli_nuevo.id)
+
+    # Verificar que el entry de cupo sugiere el cupo semilla ($40,000 para conocido_referido)
+    assert "40000.00" in cxc_frame.entry_nuevo_cupo.get()
+    assert "Sugerencia Cold-Start" in cxc_frame.lbl_sugerencia_cupo.cget("text")
+
+    # Verificar que en la base de datos SIGUE teniendo limite_credito = 0.0 (no se autoguardó)
+    cli_bd = cxc_service.obtener_cliente(cli_nuevo.id, conn)
+    assert cli_bd.limite_credito == 0.0
+
+
+def test_perfil_cliente_historial_inmutable_y_cascada_abono(ui_app):
+    """
+    Verifica que:
+    1. El historial CxC no tenga bindings de mutación (inmutable append-only).
+    2. Al registrar un abono, se dispare la actualización en cascada sin recargar pantalla:
+       (a) Nueva fila en Treeview de historial.
+       (b) Actualización de saldo_actual y cupo_disponible.
+       (c) Recálculo fresco de score y clase de riesgo.
+    3. Emisión del comprobante digital.
+    """
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    conn = ui_app.sesion.conn
+
+    # 1. Inmutabilidad en Treeview: no contiene bindings de doble clic ni menú de edición
+    bindings = cxc_frame.tree_historial.bind()
+    assert "<Double-1>" not in bindings
+    assert "<Button-3>" not in bindings
+
+    # 2. Preparar cliente con saldo deudor
+    cli_test = cxc_service.crear_cliente(
+        nombre="Cliente Deudor Test Cascada",
+        conn=conn,
+        nivel_vinculo="registro_completo",
+        limite_credito=1000.0,
+    )
+    cxc_service.registrar_cargo(
+        cliente_id=cli_test.id,
+        monto=500.0,
+        conn=conn,
+        descripcion="Cargo para prueba de abono",
+    )
+
+    cxc_frame._cargar_selector_clientes(mantener_id=cli_test.id)
+    assert cxc_frame._cliente_actual.saldo_actual == 500.0
+    filas_antes = len(cxc_frame.tree_historial.get_children())
+
+    # 3. Registrar Abono de $200.00
+    cxc_frame.entry_monto_abono.delete(0, tk.END)
+    cxc_frame.entry_monto_abono.insert(0, "200.00")
+    cxc_frame._registrar_abono()
+
+    assert cxc_frame.area_error_abono.tiene_error() is False
+    assert "Abono #" in cxc_frame.lbl_exito_abono.cget("text")
+
+    # (a) Verificación de nueva fila en historial
+    filas_despues = len(cxc_frame.tree_historial.get_children())
+    assert filas_despues == filas_antes + 1
+
+    # (b) Verificación de saldo y cupo actualizados
+    assert cxc_frame._cliente_actual.saldo_actual == 300.00
+    assert cxc_frame._cliente_actual.cupo_disponible == 700.00
+    assert "300.00" in cxc_frame.lbl_saldo_actual.cget("text")
+    assert "700.00" in cxc_frame.lbl_cupo_disp.cget("text")
+
+    # (c) Verificación de recálculo fresco de scoring
+    assert "Score:" in cxc_frame.lbl_score_valor.cget("text")
+    assert cxc_frame.lbl_badge_clase.cget("text") != "Clase: --"
+
+    # 4. Comprobante digital
+    cxc_frame._ver_comprobante()
+
 
