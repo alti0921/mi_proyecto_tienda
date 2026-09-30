@@ -8,6 +8,7 @@ from ui.estilos import COLOR_FONDO_APP, configurar_estilos
 from ui.sesion import SesionActual
 from ui.widgets_comunes import BarraSuperior
 from ui.pantallas.login import PantallaLogin
+from ui.pantallas.pos import PantallaPOS
 
 
 class PantallaPlaceholder(tk.Frame):
@@ -86,8 +87,16 @@ class App(tk.Tk):
         )
         self.pantallas["login"].grid(row=0, column=0, sticky="nsew")
 
+        # Pantalla 2: POS
+        self.pantallas["pos"] = PantallaPOS(
+            parent=self.contenedor,
+            app=self,
+            sesion=self.sesion,
+        )
+        self.pantallas["pos"].grid(row=0, column=0, sticky="nsew")
+
         # Pantallas provisionales (se reemplazarán en los siguientes hitos)
-        for nombre in ("pos", "cxc", "inventario", "reportes"):
+        for nombre in ("cxc", "inventario", "reportes"):
             frame = PantallaPlaceholder(parent=self.contenedor, nombre=nombre, app=self)
             frame.grid(row=0, column=0, sticky="nsew")
             self.pantallas[nombre] = frame
