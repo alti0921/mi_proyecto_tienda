@@ -186,4 +186,4 @@ mi_proyecto_tienda/
 
 ## 9. Documentación Técnica de Referencia
 
-Para detalles profundos sobre las decisiones de diseño, la matriz de trazabilidad entre requisitos funcionales (RF) y código, y el historial de los 19 parches técnicos certificados, consultar [`docs/contexto_tecnico.md`](docs/contexto_tecnico.md).
+Para detalles profundos sobre las decisiones de diseño, la matriz de trazabilidad entre requisitos funcionales (RF) y código, y el historial de los 20 parches técnicos certificados, consultar [`docs/contexto_tecnico.md`](docs/contexto_tecnico.md).

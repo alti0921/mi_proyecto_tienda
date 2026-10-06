@@ -235,7 +235,7 @@ def registrar_snapshot(cliente_id, sw1, sw2, sw3, score_ant, score_nuevo, cat_an
     ...
 ```
 
-### 3.3 `services/cxc_service.py` — ledger de cartera (final, 12/12 tests en verde)
+### 3.3 `services/cxc_service.py` — ledger de cartera (final, 13/13 tests en verde)
 
 ```python
 NIVELES_VINCULO_VALIDOS = ("registro_completo", "conocido_referido", "solo_apodo")
@@ -267,11 +267,14 @@ def actualizar_cliente(cliente_id, conn, nombre=None, telefono=None, direccion=N
     """
     ...
 
-def registrar_cargo(cliente_id, monto, conn, venta_id=None, descripcion=None, auto_commit: bool = True) -> CuentaPorCobrar:
+def registrar_cargo(cliente_id, monto, conn, venta_id=None, descripcion=None, auto_commit: bool = True, usuario_id=None) -> CuentaPorCobrar:
     """
     Salvaguarda de cupo (RF-CXC-06): rechaza CUALQUIER cargo cuyo saldo
     resultante supere clientes.limite_credito -- SIN excepción para
     limite_credito == 0.0 (cliente sin cupo asignado = cupo cero, no cupo infinito).
+    usuario_id (Optional[int], parche #20): identifica al cajero que procesó el
+    movimiento, propagado desde pos_service.registrar_venta(); persiste NULL para
+    registros legados anteriores a la migración.
     """
     nuevo_saldo = round(saldo_actual + monto, 2)
     if nuevo_saldo > limite_credito:
@@ -279,8 +282,10 @@ def registrar_cargo(cliente_id, monto, conn, venta_id=None, descripcion=None, au
                           f"(Cupo: {limite_credito}, Saldo resultante: {nuevo_saldo}).")
     ...
 
-def registrar_abono(cliente_id, monto, conn, venta_id=None, descripcion=None, auto_commit: bool = True) -> CuentaPorCobrar:
+def registrar_abono(cliente_id, monto, conn, venta_id=None, descripcion=None, auto_commit: bool = True, usuario_id=None) -> CuentaPorCobrar:
     # monto <= 0 o monto > saldo_actual -> ValueError
+    # usuario_id (Optional[int], parche #20): en perfil_cliente.py se envía
+    # sesion.usuario_actual.id -- el cajero realmente autenticado en ese momento.
     ...
 
 def consultar_saldo(cliente_id, conn) -> float: ...
@@ -329,7 +334,9 @@ def registrar_venta(
        a. inventario_service.ajustar_stock(producto_id, -cantidad, conn, auto_commit=False)
        b. INSERT ventas, INSERT venta_detalle
        c. Si credito: monto_a_fiar = round(total - monto_pagado, 2)
-          cxc_service.registrar_cargo(cliente_id, monto_a_fiar, conn, venta_id, auto_commit=False)
+          cxc_service.registrar_cargo(cliente_id=cliente_id, monto=monto_a_fiar, conn=conn,
+                                       venta_id=venta_id, descripcion=f"Venta a crédito #{venta_id}",
+                                       auto_commit=False, usuario_id=usuario_id)
           scoring_service.registrar_snapshot(..., auto_commit=False)
        d. conn.commit() unificado / except: conn.rollback() + re-raise
     """
@@ -339,6 +346,8 @@ def registrar_venta(
 **Composición transaccional:** `registrar_cargo`, `registrar_abono`, `registrar_snapshot` y `ajustar_stock` reciben todas `auto_commit: bool = True` (política transversal, ver Sección 2.6). Llamadas aisladas/tests siguen comiteando solas; `pos_service.py` las invoca con `auto_commit=False` para que el commit/rollback quede centralizado en `registrar_venta`. Verificado con `test_atomicidad_post_cargo_fallo_en_snapshot`.
 
 **Abono inicial en venta a crédito:** el cargo a `cuentas_por_cobrar` se calcula sobre `monto_a_fiar = total - monto_pagado`, nunca sobre `total` completo.
+
+**Trazabilidad de cajero (parche #20):** el `usuario_id` recibido por `registrar_venta()` (el cajero autenticado que procesa la venta) se propaga a `cxc_service.registrar_cargo()` cuando la venta es a crédito, de modo que el comprobante PDF (RF-CXC-04) siempre pueda mostrar quién originó el cargo, no solo quién está en sesión al momento de imprimirlo.
 
 ### 3.5 `services/inventario_service.py` — gestión de stock (final, 13/13 tests en verde)
 
@@ -416,7 +425,7 @@ def autenticar_usuario(username: str, password: str, conn: sqlite3.Connection) -
     ...
 ```
 
-### 3.7 `services/reportes_service.py` — consolidados operativos (final, 4/4 tests en verde)
+### 3.7 `services/reportes_service.py` — consolidados operativos y comprobantes (final, 8/8 tests en verde)
 
 ```python
 def obtener_arqueo_diario(fecha: Optional[str], conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -449,14 +458,32 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
     estado_banda). Excluye clientes con saldo $0.
     """
     ...
+
+def generar_comprobante_pdf(
+    movimiento_id: int,
+    conn: sqlite3.Connection,
+    ruta_salida: Optional[str] = None
+) -> str:
+    """
+    RF-CXC-04 (parche #20). Tirilla térmica 80mm (~226.77pt) x 160mm vía reportlab.
+    Cajero auditable: consulta usuarios.nombre a través de movimiento.usuario_id,
+    o "No registrado" si es NULL (registros legados anteriores a la migración).
+    Reconstrucción determinista del saldo anterior a partir del ledger inmutable:
+    - Abono: saldo_anterior = saldo_resultante + monto
+    - Cargo: saldo_anterior = saldo_resultante - monto
+    Si no se suministra ruta_salida, escribe en un archivo temporal .pdf y retorna
+    su ruta absoluta. Integrado en perfil_cliente.py, que abre el PDF con el visor
+    nativo del sistema operativo (os.startfile / open / xdg-open).
+    """
+    ...
 ```
 
 ### 3.8 Modelos de dominio confirmados
 
 - `models/producto.py` → `Producto`: `stock: int`, `stock_minimo: int`, más `@property margen` y `@property alerta_stock_bajo`.
-- `models/cuenta_por_cobrar.py` → `CuentaPorCobrar` (DTO/Read-Model, no se persiste directo) y `Abono` (NO es tabla — filtro de `cuentas_por_cobrar` donde `tipo_movimiento='abono'`).
+- `models/cuenta_por_cobrar.py` → `CuentaPorCobrar` (DTO/Read-Model, no se persiste directo, incluye `usuario_id: Optional[int] = None`) y `Abono` (NO es tabla — filtro de `cuentas_por_cobrar` donde `tipo_movimiento='abono'`).
 - `models/cliente.py` → `Cliente`, con `@property cupo_disponible = max(0.0, round(limite_credito - saldo_actual, 2))`.
-- `models/usuario.py` → `Usuario` (incluye `rol`), usado por `auth_service.autenticar_usuario()`.
+- `models/usuario.py` → `Usuario` (incluye `rol`), usado por `auth_service.autenticar_usuario()` y referenciado por `cuentas_por_cobrar.usuario_id`.
 - Los 7 dataclasses (`Cliente`, `Producto`, `Venta`/`VentaDetalle`, `CuentaPorCobrar`/`Abono`, `ScoringHistorial`, `Usuario`) exportados en `models/__init__.py`.
 
 ---
@@ -558,10 +585,9 @@ Documento completo: título + 5 pantallas, cada una con diagrama de caja de baja
 
 ### 8.3 Pantalla 3 — Perfil de Cliente / CxC
 - Panel izquierdo (~55%): ficha del cliente (nombre/teléfono/dirección/nivel de vínculo vía `actualizar_cliente`), badge Score + Clase de Riesgo (color por clase), bloque de cupo con sugerencia Cold-Start precargada, campo "Nuevo cupo" + botón "Confirmar/Asignar Cupo" **restringido a rol=admin** (deshabilitado en gris para vendedor).
-- Panel derecho (~45%): historial CxC append-only (sin editar/borrar), formulario "Registrar Abono" disponible para admin y vendedor, área de error de abono.
+- Panel derecho (~45%): historial CxC append-only (sin editar/borrar), formulario "Registrar Abono" disponible para admin y vendedor, área de error de abono, botón "🧾 Ver Comprobante Digital" que genera y abre el comprobante PDF del movimiento seleccionado (RF-CXC-04).
 - **RF trazados:** RF-CXC-01 a 06, RF-SCR-01 a 06.
-- **Backend:** `cxc_service.buscar_clientes/obtener_cliente/actualizar_cliente/registrar_abono/obtener_historial_cxc`, `scoring_service.calcular_score/aplicar_matriz_decision/evaluar_cold_start`, `pos_service.asignar_limite_credito`.
-- **Nota de arquitectura:** el comprobante PDF por fila (RF-CXC-04) queda pendiente de `services/reportes_service.py` en su función de exportación — el botón se mantiene diagramado con un stub/visor de texto formateado mientras tanto.
+- **Backend:** `cxc_service.buscar_clientes/obtener_cliente/actualizar_cliente/registrar_abono/obtener_historial_cxc`, `scoring_service.calcular_score/aplicar_matriz_decision/evaluar_cold_start`, `pos_service.asignar_limite_credito`, `reportes_service.generar_comprobante_pdf`.
 
 ### 8.4 Pantalla 4 — Gestión de Inventario
 - Panel izquierdo (~62%): catálogo con buscador, filtro "Stock bajo", badge global de alertas (`listar_alertas_stock`), fila resaltada en ámbar para productos con `stock_actual ≤ stock_minimo`.
@@ -590,9 +616,9 @@ Documento completo: título + 5 pantallas, cada una con diagrama de caja de baja
 
 ---
 
-## 9. ✅ Fase 3 — Backend certificado (57/57) como base de la construcción de `/ui`
+## 9. ✅ Fase 3 — Backend certificado (62/62) como base de la construcción de `/ui`
 
-**Backend 100% cerrado:** `db/schema.sql`, `/models`, `scoring_service.py`, `inventario_service.py`, `cxc_service.py`, `pos_service.py`, `auth_service.py` y `reportes_service.py` — todos auditados línea por línea, con atomicidad verificada de punta a punta (`auto_commit` estandarizado en las 4 funciones transaccionales) y sin ninguna vía de bypass de las reglas de negocio (RF-SCR-03/04, RF-CXC-06).
+**Backend 100% cerrado:** `db/schema.sql`, `/models`, `scoring_service.py`, `inventario_service.py`, `cxc_service.py`, `pos_service.py`, `auth_service.py` y `reportes_service.py` — todos auditados línea por línea, con atomicidad verificada de punta a punta (`auto_commit` estandarizado en las 4 funciones transaccionales) y sin ninguna vía de bypass de las reglas de negocio (RF-SCR-03/04, RF-CXC-06). El conteo de 62/62 incorpora la migración de `usuario_id` (parche #20) sobre los 57 tests certificados al cierre original de Fase 2; ver desglose actual por módulo en la Sección 1.2.
 
 **Fase 2 100% cerrada:** Blueprint, E-R y las 5 pantallas de `Wireframes_Fase2.docx`, con cada componente trazado a su RF y a la función pública de `/services` que lo satisface (ver Sección 8).
 
@@ -600,9 +626,9 @@ Sobre esta base se construyó `/ui` (Tkinter), documentada completa en la Secci�
 
 ---
 
-## 10. ✅ Fase 3 — `/ui` en Tkinter, construida y certificada (79/79 tests en verde)
+## 10. ✅ Fase 3 — `/ui` en Tkinter, construida y certificada (84/84 tests en verde, total del proyecto)
 
-Las 5 pantallas se construyeron en 5 hitos incrementales (Login → POS → Perfil/CxC → Inventario → Reportes), cada uno auditado por Claude contra los wireframes de la Sección 8 antes de aprobar el siguiente. Commits de referencia: `ac2f1d5` (Hito 1), `39fee6b` (Hito 2), `360d2c5` (Hito 3), `8afdd22` (Hito 4), `1185ac9` (Hito 5).
+Las 5 pantallas se construyeron en 5 hitos incrementales (Login → POS → Perfil/CxC → Inventario → Reportes), cada uno auditado por Claude contra los wireframes de la Sección 8 antes de aprobar el siguiente. Commits de referencia: `ac2f1d5` (Hito 1), `39fee6b` (Hito 2), `360d2c5` (Hito 3), `8afdd22` (Hito 4), `1185ac9` (Hito 5); `9b61f8e` (migración `usuario_id` + PDF, parche #20).
 
 ### 10.1 Estructura de archivos
 
@@ -619,7 +645,7 @@ ui/
 └── pantallas/
     ├── login.py             # RF-AUT-01
     ├── pos.py                # RF-POS-01 a 04, RF-CXC-05/06, RF-SCR-03/04
-    ├── perfil_cliente.py     # RF-CXC-01 a 06, RF-SCR-01 a 06
+    ├── perfil_cliente.py     # RF-CXC-01 a 06, RF-SCR-01 a 06, RF-CXC-04 (comprobante PDF)
     ├── inventario.py         # RF-INV-01 a 03, RS-05
     └── reportes.py           # RF-REP-01, RF-REP-02
 ```
@@ -638,26 +664,28 @@ Por eso, **todo control restringido por rol se re-evalúa en cada navegación, n
 
 - **Login:** único punto que abre la `conn` compartida de la sesión; produce el `Usuario(rol)` que el resto de la app consume vía `sesion.usuario_actual`.
 - **POS:** carrito como lista en memoria (`self._carrito`, nunca leído desde el widget visual al confirmar); el badge de Clase de Riesgo/cupo en la ficha del cliente es **puramente informativo** — el botón "Confirmar Venta" permanece siempre `state="normal"`, y la única autoridad de rechazo es el `ValueError` que devuelve `pos_service.registrar_venta()` (verificado con `test_pos_boton_confirmar_activo_y_rechazo_clase_d_backend`). Tras cada venta: carrito vacío, catálogo y cupo del cliente refrescados.
-- **Perfil de Cliente/CxC:** formularios de ficha demográfica y de asignación de cupo desacoplados, cada uno con su propio manejador y `AreaError`. El badge Score/Clase se recalcula (`calcular_score()` + `aplicar_matriz_decision()` frescos) tanto tras un abono **como tras editar `nivel_vinculo`** (que alimenta `SW3` directamente) — verificado con `test_perfil_cliente_cambio_vinculo_recalcula_score_en_caliente`. Historial CxC sin ningún binding de edición/borrado.
+- **Perfil de Cliente/CxC:** formularios de ficha demográfica y de asignación de cupo desacoplados, cada uno con su propio manejador y `AreaError`. El badge Score/Clase se recalcula (`calcular_score()` + `aplicar_matriz_decision()` frescos) tanto tras un abono **como tras editar `nivel_vinculo`** (que alimenta `SW3` directamente) — verificado con `test_perfil_cliente_cambio_vinculo_recalcula_score_en_caliente`. Historial CxC sin ningún binding de edición/borrado. El botón "Ver Comprobante Digital" resuelve el movimiento seleccionado en el historial (o el último abono registrado), llama `reportes_service.generar_comprobante_pdf()` y abre el resultado con el visor nativo del sistema operativo, capturando cualquier excepción en `AreaError` sin bloquear la interfaz.
 - **Inventario:** patrón maestro-detalle (`<<TreeviewSelect>>` alimenta los 3 bloques de acción); selector Entrada/Salida + magnitud del stepper se combinan en un entero con signo antes de llamar `ajustar_stock(..., auto_commit=True)`; categoría de producto restringida a `ttk.Combobox(state="readonly")`.
 - **Reportes:** `ttk.Notebook` con bloqueo reactivo de la pestaña Cartera/CxC (ver 10.3); Tab 1 se refresca al cambiar de fecha y al reentrar a la pestaña; Tab 2 hace una única consulta a `obtener_consolidado_cartera()` y filtra por clase/mora en memoria, sin golpear la base de datos por cada cambio de filtro.
 
 ### 10.5 Suite de pruebas de interfaz (`tests/test_ui.py`) — 22 tests
 
-Cubren: ciclo de vida de `SesionActual`, comportamiento de `AreaError`, habilitación/deshabilitación de `BotonRestringidoPorRol`, inicialización y navegación de `App`, el flujo completo de Login, la conmutación de permisos en caliente entre roles, catálogo/carrito/ventas del POS (efectivo, Nequi y crédito con anticipo parcial), edición de ficha y recálculo de scoring en Perfil de Cliente, cascada completa tras un abono, maestro-detalle y ajuste de stock con signo en Inventario, y el bloqueo reactivo de pestaña más el cálculo de KPIs en Reportes.
+Cubren: ciclo de vida de `SesionActual`, comportamiento de `AreaError`, habilitación/deshabilitación de `BotonRestringidoPorRol`, inicialización y navegación de `App`, el flujo completo de Login, la conmutación de permisos en caliente entre roles, catálogo/carrito/ventas del POS (efectivo, Nequi y crédito con anticipo parcial), edición de ficha y recálculo de scoring en Perfil de Cliente, cascada completa tras un abono, emisión de comprobante PDF desde Perfil de Cliente, maestro-detalle y ajuste de stock con signo en Inventario, y el bloqueo reactivo de pestaña más el cálculo de KPIs en Reportes.
 
 ### 10.6 Implementación completa de RF-CXC-04 (Comprobante en PDF Real)
 
-Se implementó exitosamente `reportes_service.generar_comprobante_pdf(movimiento_id, conn)` utilizando `reportlab`. Genera una tirilla térmica estándar de 80mm con:
-- Cabecera y datos del micronegocio.
-- Folio `#MOV-{id:06d}` y fecha inmutable.
-- Cajero histórico auditable (obtenido vía `cuentas_por_cobrar.usuario_id` o 'No registrado' en registros legados).
-- Cliente, teléfono y concepto.
+Se implementó exitosamente `reportes_service.generar_comprobante_pdf(movimiento_id, conn, ruta_salida=None) -> str` utilizando `reportlab`. Genera una tirilla térmica estándar de 80mm con:
+- Cabecera y datos del micronegocio, folio inmutable `#MOV-{id:06d}` y marca de tiempo real.
+- Cajero histórico auditable (obtenido vía `cuentas_por_cobrar.usuario_id` o "No registrado" en registros legados sin este dato — ver parche #20).
+- Cliente, teléfono y concepto (`>>> ABONO A CARTERA <<<` o `>>> CARGO POR VENTA A CRÉDITO <<<`).
 - Reconstrucción determinista del saldo anterior:
   `saldo_anterior = saldo_resultante + monto` (abono) o `saldo_resultante - monto` (cargo).
 - Detalle financiero con alineación decimal y nuevo saldo.
-- La Pantalla 3 (`perfil_cliente.py`) invoca la generación y lanza el visor predeterminado del sistema operativo (`os.startfile` en Windows / `subprocess` en Unix), reportando cualquier incidencia en `AreaError`.
+- Si no se suministra `ruta_salida`, escribe en un archivo temporal `.pdf` y retorna su ruta absoluta.
+- La Pantalla 3 (`perfil_cliente.py`) invoca la generación y lanza el visor predeterminado del sistema operativo (`os.startfile` en Windows / `open` en macOS / `xdg-open` en Linux), reportando cualquier incidencia en `AreaError` sin bloquear la interfaz.
+
+Cobertura dedicada en `tests/test_reportes.py`: `test_generar_comprobante_pdf_con_usuario_identificado`, `test_generar_comprobante_pdf_usuario_none_caso_legado`, `test_generar_comprobante_pdf_cargo_venta_credito_y_ruta_temporal`, `test_generar_comprobante_pdf_validaciones_error`.
 
 ---
 
-*Última actualización: cierre formal de Fase 3 completa al 100% — backend (62/62) y `/ui` en Tkinter (22/22) para un total de **84/84 tests en verde**, incluyendo la migración de `cuentas_por_cobrar.usuario_id` y la emisión de comprobantes en PDF térmico 80mm (RF-CXC-04). Generado a partir de la auditoría acumulada del proyecto.*
+*Última actualización: cierre formal de Fase 3 completa al 100% — backend (62/62) y `/ui` en Tkinter (22/22) para un total de **84/84 tests en verde**, incluyendo la migración de `cuentas_por_cobrar.usuario_id` (Parche #20) y la emisión de comprobantes en PDF térmico 80mm (RF-CXC-04). Generado a partir de la auditoría acumulada del proyecto.*
