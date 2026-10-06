@@ -166,7 +166,7 @@ mi_proyecto_tienda/
 │       ├── perfil_cliente.py
 │       ├── inventario.py
 │       └── reportes.py
-├── tests/                   # Suite de pruebas automatizadas (79 tests)
+├── tests/                   # Suite de pruebas automatizadas (84 tests)
 │   ├── test_auth.py
 │   ├── test_cxc.py
 │   ├── test_inventario.py
