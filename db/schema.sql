@@ -89,13 +89,15 @@ CREATE TABLE cuentas_por_cobrar (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cliente_id INTEGER NOT NULL,
     venta_id INTEGER,
+    usuario_id INTEGER,
     tipo_movimiento TEXT NOT NULL CHECK (tipo_movimiento IN ('cargo', 'abono')),
     monto REAL NOT NULL CHECK (monto > 0),
     saldo_resultante REAL NOT NULL CHECK (saldo_resultante >= 0),
     descripcion TEXT,
     fecha_movimiento DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (cliente_id) REFERENCES clientes(id),
-    FOREIGN KEY (venta_id) REFERENCES ventas(id)
+    FOREIGN KEY (venta_id) REFERENCES ventas(id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
 );
 
 -- 7. Tabla: scoring_historial

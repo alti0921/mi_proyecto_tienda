@@ -1,10 +1,13 @@
+import os
 import sqlite3
+import subprocess
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Any, Dict, List, Optional
 
 from models.cliente import Cliente
-from services import cxc_service, pos_service, scoring_service
+from services import cxc_service, pos_service, reportes_service, scoring_service
 from ui.estilos import (
     COLOR_ALERTA_BG,
     COLOR_ALERTA_BORDE,
@@ -778,12 +781,14 @@ class PantallaPerfilCliente(tk.Frame):
 
         try:
             saldo_previo = self._cliente_actual.saldo_actual
+            usuario_id = self.sesion.usuario_actual.id if (self.sesion and self.sesion.usuario_actual) else None
             abono_dto = cxc_service.registrar_abono(
                 cliente_id=self._cliente_actual.id,
                 monto=monto,
                 conn=self.sesion.conn,
                 descripcion=desc,
                 auto_commit=True,
+                usuario_id=usuario_id,
             )
 
             # Guardar referencia para comprobante digital
@@ -829,74 +834,73 @@ class PantallaPerfilCliente(tk.Frame):
             self.area_error_abono.mostrar_error(f"Error inesperado al registrar abono: {e}")
 
     # =========================================================================
-    # COMPROBANTE DIGITAL PROVISIONAL (RF-CXC-04)
+    # COMPROBANTE DIGITAL EN PDF 80MM (RF-CXC-04)
     # =========================================================================
 
+    def _abrir_pdf_sistema(self, ruta_pdf: str) -> None:
+        """Abre el archivo PDF generado en el visor predeterminado del sistema operativo."""
+        try:
+            if sys.platform == "win32":
+                os.startfile(ruta_pdf)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", ruta_pdf], check=True)
+            else:
+                subprocess.run(["xdg-open", ruta_pdf], check=True)
+        except Exception as e:
+            self.area_error_abono.mostrar_error(
+                f"Comprobante PDF generado en '{ruta_pdf}', pero no se pudo abrir el visor del sistema: {e}"
+            )
+
     def _ver_comprobante(self) -> None:
-        """Abre un diálogo modal con el comprobante digital formateado."""
-        if not self._ultimo_abono:
-            # Si no hubo abono reciente, generar extracto de cuenta actual
-            if not self._cliente_actual:
-                messagebox.showinfo("Comprobante", "Seleccione un cliente para emitir comprobante.")
-                return
-            datos = {
-                "abono_id": "ESTADO-CUENTA",
-                "cliente_nombre": self._cliente_actual.nombre,
-                "cliente_id": self._cliente_actual.id,
-                "monto": 0.0,
-                "saldo_previo": self._cliente_actual.saldo_actual,
-                "saldo_resultante": self._cliente_actual.saldo_actual,
-                "descripcion": "Consulta / Estado de cuenta actual",
-                "fecha": "Fecha actual",
-                "usuario": self.sesion.usuario_actual.nombre if self.sesion.usuario_actual else "Sistema",
-            }
-        else:
-            datos = self._ultimo_abono
-
-        top = tk.Toplevel(self)
-        top.title(f"Recibo de Pago — #{datos['abono_id']}")
-        top.geometry("440x480")
-        top.minsize(400, 420)
-        top.configure(background="#ffffff")
-
-        # Texto del ticket simulado
-        texto_recibo = f"""
-==================================================
-           MI TIENDA DE ABARROTES
-   Sistema POS & Scoring Crediticio de Microtienda
-==================================================
-COMPROBANTE DE ABONO A CARTERA: #{datos['abono_id']}
-Fecha / Hora : {datos['fecha']}
-Atendido por : {datos['usuario']}
---------------------------------------------------
-CLIENTE      : {datos['cliente_nombre']} (ID: {datos['cliente_id']})
-Concepto     : {datos['descripcion']}
-
-Saldo anterior       : $ {datos['saldo_previo']:>12,.2f} COP
-VALOR ABONADO        : $ {datos['monto']:>12,.2f} COP
---------------------------------------------------
-NUEVO SALDO PENDIENTE: $ {datos['saldo_resultante']:>12,.2f} COP
-==================================================
-   ¡Gracias por su pago oportuno y su confianza!
-   Conserve este soporte para cualquier reclamo.
-==================================================
         """
+        Genera el comprobante en formato tirilla térmica 80mm en PDF (RF-CXC-04)
+        y lo abre en el visor predeterminado del sistema operativo.
+        """
+        self.area_error_abono.limpiar()
 
-        txt = tk.Text(
-            top,
-            font=FUENTE_MONO_BASE,
-            background="#ffffff",
-            foreground="#2c3e50",
-            relief="flat",
-            padx=15,
-            pady=15,
-        )
-        txt.insert("1.0", texto_recibo)
-        txt.config(state="disabled")
-        txt.pack(fill=tk.BOTH, expand=True)
+        movimiento_id: Optional[int] = None
 
-        btn_cerrar = ttk.Button(top, text="Cerrar", command=top.destroy)
-        btn_cerrar.pack(pady=(0, 12))
+        # 1. Prioridad: movimiento seleccionado en la tabla de historial
+        seleccion = self.tree_historial.selection()
+        if seleccion:
+            valores = self.tree_historial.item(seleccion[0], "values")
+            if valores and valores[0]:
+                try:
+                    movimiento_id = int(valores[0])
+                except (ValueError, TypeError):
+                    pass
+
+        # 2. Si no hay selección, usar el último abono registrado en la sesión
+        if movimiento_id is None and self._ultimo_abono and isinstance(self._ultimo_abono.get("abono_id"), int):
+            movimiento_id = self._ultimo_abono["abono_id"]
+
+        # 3. Si aún no hay ID, pero el cliente tiene movimientos en el historial
+        if movimiento_id is None and self._cliente_actual:
+            hijos = self.tree_historial.get_children()
+            if hijos:
+                ultimos_valores = self.tree_historial.item(hijos[-1], "values")
+                if ultimos_valores and ultimos_valores[0]:
+                    try:
+                        movimiento_id = int(ultimos_valores[0])
+                    except (ValueError, TypeError):
+                        pass
+
+        if movimiento_id is None:
+            self.area_error_abono.mostrar_error(
+                "Seleccione un movimiento del historial o registre un abono para generar su comprobante en PDF."
+            )
+            return
+
+        try:
+            ruta_pdf = reportes_service.generar_comprobante_pdf(
+                movimiento_id=movimiento_id,
+                conn=self.sesion.conn,
+            )
+            self._abrir_pdf_sistema(ruta_pdf)
+        except ValueError as e:
+            self.area_error_abono.mostrar_error(str(e))
+        except Exception as e:
+            self.area_error_abono.mostrar_error(f"Error al generar comprobante en PDF: {e}")
 
     # =========================================================================
     # DIÁLOGO MODAL: CREAR NUEVO CLIENTE (RF-CXC-02)

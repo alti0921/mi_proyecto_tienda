@@ -24,10 +24,12 @@ def _row_to_cliente(row: sqlite3.Row) -> Cliente:
 
 def _row_to_cxc(row: sqlite3.Row) -> CuentaPorCobrar:
     """Mapea una fila de sqlite3.Row al DTO CuentaPorCobrar."""
+    usuario_id = row["usuario_id"] if "usuario_id" in row.keys() else None
     return CuentaPorCobrar(
         id=row["id"],
         cliente_id=row["cliente_id"],
         venta_id=row["venta_id"],
+        usuario_id=usuario_id,
         tipo_movimiento=row["tipo_movimiento"],
         monto=float(row["monto"]),
         saldo_resultante=float(row["saldo_resultante"]),
@@ -225,11 +227,12 @@ def registrar_cargo(
     venta_id: Optional[int] = None,
     descripcion: Optional[str] = None,
     auto_commit: bool = True,
+    usuario_id: Optional[int] = None,
 ) -> CuentaPorCobrar:
     """
     Registra un cargo a la cuenta por cobrar del cliente (RF-CXC-01).
     Garantiza atomicidad transaccional:
-    1. Inserta el movimiento inmutable en cuentas_por_cobrar.
+    1. Inserta el movimiento inmutable en cuentas_por_cobrar con usuario_id opcional.
     2. Actualiza clientes.saldo_actual = saldo_actual + monto.
     Si auto_commit es True, confirma o revierte la transacción internamente.
     Si es False, delega el control transaccional al orquestador.
@@ -258,11 +261,11 @@ def registrar_cargo(
         cursor.execute(
             """
             INSERT INTO cuentas_por_cobrar (
-                cliente_id, venta_id, tipo_movimiento, monto, saldo_resultante, descripcion
+                cliente_id, venta_id, usuario_id, tipo_movimiento, monto, saldo_resultante, descripcion
             )
-            VALUES (?, ?, 'cargo', ?, ?, ?)
+            VALUES (?, ?, ?, 'cargo', ?, ?, ?)
             """,
-            (cliente_id, venta_id, monto, nuevo_saldo, descripcion),
+            (cliente_id, venta_id, usuario_id, monto, nuevo_saldo, descripcion),
         )
         cxc_id = cursor.lastrowid
 
@@ -288,6 +291,7 @@ def registrar_cargo(
         id=cxc_id,
         cliente_id=cliente_id,
         venta_id=venta_id,
+        usuario_id=usuario_id,
         tipo_movimiento="cargo",
         monto=monto,
         saldo_resultante=nuevo_saldo,
@@ -303,12 +307,13 @@ def registrar_abono(
     venta_id: Optional[int] = None,
     descripcion: Optional[str] = None,
     auto_commit: bool = True,
+    usuario_id: Optional[int] = None,
 ) -> CuentaPorCobrar:
     """
     Registra un abono a la cuenta del cliente (RF-CXC-01).
     Valida que el abono no supere el saldo pendiente (impide saldo negativo/a favor).
     Garantiza atomicidad transaccional:
-    1. Inserta el movimiento inmutable en cuentas_por_cobrar.
+    1. Inserta el movimiento inmutable en cuentas_por_cobrar con usuario_id opcional.
     2. Actualiza clientes.saldo_actual = saldo_actual - monto.
     Si auto_commit es True, confirma o revierte la transacción internamente.
     Si es False, delega el control transaccional al orquestador.
@@ -336,11 +341,11 @@ def registrar_abono(
         cursor.execute(
             """
             INSERT INTO cuentas_por_cobrar (
-                cliente_id, venta_id, tipo_movimiento, monto, saldo_resultante, descripcion
+                cliente_id, venta_id, usuario_id, tipo_movimiento, monto, saldo_resultante, descripcion
             )
-            VALUES (?, ?, 'abono', ?, ?, ?)
+            VALUES (?, ?, ?, 'abono', ?, ?, ?)
             """,
-            (cliente_id, venta_id, monto, nuevo_saldo, descripcion),
+            (cliente_id, venta_id, usuario_id, monto, nuevo_saldo, descripcion),
         )
         cxc_id = cursor.lastrowid
 
@@ -366,6 +371,7 @@ def registrar_abono(
         id=cxc_id,
         cliente_id=cliente_id,
         venta_id=venta_id,
+        usuario_id=usuario_id,
         tipo_movimiento="abono",
         monto=monto,
         saldo_resultante=nuevo_saldo,

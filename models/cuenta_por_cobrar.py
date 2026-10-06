@@ -11,6 +11,7 @@ class CuentaPorCobrar:
     id: Optional[int] = None
     cliente_id: int = 0
     venta_id: Optional[int] = None
+    usuario_id: Optional[int] = None
     tipo_movimiento: str = "cargo"  # 'cargo' o 'abono'
     monto: float = 0.0
     saldo_resultante: float = 0.0

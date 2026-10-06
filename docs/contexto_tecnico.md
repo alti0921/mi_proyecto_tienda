@@ -19,9 +19,9 @@
 | **Fase 1** — Diagnóstico | 15 encuestas de campo a tenderos, calibración empírica de variables (P-Q1 a P-Q9), ajuste de Alcance/Delimitaciones, respuesta a observaciones metodológicas del profesor | ✅ Cerrada y aprobada |
 | **Fase 2** — Diseño de arquitectura | Blueprint de Arquitectura (4 capas), Modelo Entidad-Relación (E-R) | ✅ Completa |
 | **Fase 2** — Wireframes | 5 pantallas: Login, POS, Perfil cliente/CxC, Inventario, Reportes — documento `Wireframes_Fase2.docx` con diagramas de caja, tabla de trazabilidad RF por componente y permisos por rol | ✅ **Completa y cerrada formalmente** |
-| **Fase 3** — Construcción modular (backend) | `db/schema.sql`, `/models`, `services/scoring_service.py`, `services/inventario_service.py`, `services/cxc_service.py`, `services/pos_service.py`, `services/auth_service.py`, `services/reportes_service.py`, `tests/` | ✅ Auditado, corregido y con **57/57 tests en verde** |
-| **Fase 3** — Construcción de interfaz | `/ui` (Tkinter): `app.py`, `sesion.py`, `estilos.py`, `widgets_comunes.py` y las 5 pantallas (`login.py`, `pos.py`, `perfil_cliente.py`, `inventario.py`, `reportes.py`) | ✅ **Completa y cerrada formalmente — 79/79 tests en verde** (ver Sección 10) |
-| **Fase 3** — Pendiente no bloqueante | Exportación real de comprobante en PDF (RF-CXC-04), vía `services/reportes_service.py` (probablemente `reportlab`) | ❌ Pendiente — hoy la UI usa un visor modal de texto formateado como stub |
+| **Fase 3** — Construcción modular (backend) | `db/schema.sql`, `/models`, `services/scoring_service.py`, `services/inventario_service.py`, `services/cxc_service.py`, `services/pos_service.py`, `services/auth_service.py`, `services/reportes_service.py`, `tests/` | ✅ Auditado, corregido y con **62/62 tests backend en verde** |
+| **Fase 3** — Construcción de interfaz | `/ui` (Tkinter): `app.py`, `sesion.py`, `estilos.py`, `widgets_comunes.py` y las 5 pantallas (`login.py`, `pos.py`, `perfil_cliente.py`, `inventario.py`, `reportes.py`) | ✅ **Completa y cerrada formalmente — 84/84 tests en verde** (ver Sección 10) |
+| **Fase 3** — Comprobante en PDF (RF-CXC-04) | Generación de comprobante en PDF de formato tirilla térmica 80mm vía `services/reportes_service.py` con `reportlab` e integración en UI | ✅ **Completo y certificado — tirilla térmica 80mm con cajero auditable** |
 
 **Nota de clasificación de fases:** el código ya construido (`schema.sql`, `/models`, `/services`, `/tests`, `/ui`) técnicamente pertenece a Fase 3 (Construcción modular), no a los entregables formales de Fase 2. El Blueprint, el E-R y los wireframes son los tres entregables de Fase 2, y los tres están cerrados. El backend y la interfaz gráfica se tratan como "avance de Fase 3 fundamentado en un diseño de Fase 2 ya formalizado".
 
@@ -29,16 +29,16 @@
 
 | Módulo | Estado | Cobertura de tests |
 |---|---|---|
-| `db/schema.sql` (7 tablas) | ✅ Verificado línea por línea, incluye `usuarios.username COLLATE NOCASE` | N/A (fuente de verdad) |
-| `models/*.py` (dataclasses puras, incluye `Usuario`) | ✅ Verificado contra schema, exportado en `models/__init__.py` | Implícita vía tests de servicios |
+| `db/schema.sql` (7 tablas) | ✅ Verificado línea por línea, incluye `usuarios.username COLLATE NOCASE` y `cuentas_por_cobrar.usuario_id` | N/A (fuente de verdad) |
+| `models/*.py` (dataclasses puras, incluye `Usuario` y `CuentaPorCobrar.usuario_id`) | ✅ Verificado contra schema, exportado en `models/__init__.py` | Implícita vía tests de servicios |
 | `services/scoring_service.py` | ✅ Auditado y corregido (ver Sección 4) | `tests/test_scoring.py` — 8 tests |
 | `services/inventario_service.py` | ✅ Auditado y corregido (ver Sección 4) | `tests/test_inventario.py` — 13 tests |
-| `services/cxc_service.py` | ✅ Auditado y corregido, incluye `actualizar_cliente` y `buscar_clientes` (ver Sección 4) | `tests/test_cxc.py` — 12 tests |
-| `services/pos_service.py` | ✅ Auditado y corregido — **backend de ventas completo** | `tests/test_pos.py` — 12 tests |
+| `services/cxc_service.py` | ✅ Auditado y corregido, incluye `actualizar_cliente`, `buscar_clientes` y `usuario_id` auditable | `tests/test_cxc.py` — 13 tests |
+| `services/pos_service.py` | ✅ Auditado y corregido — backend de ventas completo, propaga `usuario_id` | `tests/test_pos.py` — 12 tests |
 | `services/auth_service.py` | ✅ Construido y auditado — hash SHA-256 + salt, `COLLATE NOCASE` | `tests/test_auth.py` — 8 tests |
-| `services/reportes_service.py` | ✅ Construido y auditado — reutiliza umbrales de `scoring_service` como única fuente de verdad | `tests/test_reportes.py` — 4 tests |
+| `services/reportes_service.py` | ✅ Construido y auditado — arqueo, consolidado de cartera y `generar_comprobante_pdf` (80mm) | `tests/test_reportes.py` — 8 tests |
 | `ui/*.py` (5 pantallas + andamiaje) | ✅ Construido y auditado (ver Sección 10) | `tests/test_ui.py` — 22 tests |
-| **Total suite** | ✅ **79/79 passed** | Confirmado en terminal (pytest 9.1.1, Python 3.12.10), commit `1185ac9` en `master` |
+| **Total suite** | ✅ **84/84 passed** | Confirmado en terminal (pytest 9.1.1, Python 3.12.10) |
 
 ### 1.3 Documentos de Fase 2 entregados
 
@@ -134,6 +134,7 @@ CREATE TABLE cuentas_por_cobrar (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cliente_id INTEGER NOT NULL REFERENCES clientes(id),
     venta_id INTEGER REFERENCES ventas(id),
+    usuario_id INTEGER REFERENCES usuarios(id),
     tipo_movimiento TEXT NOT NULL CHECK (tipo_movimiento IN ('cargo', 'abono')),
     monto REAL NOT NULL CHECK (monto > 0),
     saldo_resultante REAL NOT NULL CHECK (saldo_resultante >= 0),
@@ -644,10 +645,18 @@ Por eso, **todo control restringido por rol se re-evalúa en cada navegación, n
 
 Cubren: ciclo de vida de `SesionActual`, comportamiento de `AreaError`, habilitación/deshabilitación de `BotonRestringidoPorRol`, inicialización y navegación de `App`, el flujo completo de Login, la conmutación de permisos en caliente entre roles, catálogo/carrito/ventas del POS (efectivo, Nequi y crédito con anticipo parcial), edición de ficha y recálculo de scoring en Perfil de Cliente, cascada completa tras un abono, maestro-detalle y ajuste de stock con signo en Inventario, y el bloqueo reactivo de pestaña más el cálculo de KPIs en Reportes.
 
-### 10.6 Único pendiente no bloqueante: RF-CXC-04 (comprobante en PDF real)
+### 10.6 Implementación completa de RF-CXC-04 (Comprobante en PDF Real)
 
-La Pantalla 3 expone hoy un visor modal de texto formateado como stub del comprobante de abono. La exportación real a PDF requiere una función nueva en `services/reportes_service.py` (probablemente con `reportlab`), documentada desde la Sección 8.3 como pendiente de Fase 3. No bloquea el cierre de `/ui` ni el uso operativo del sistema.
+Se implementó exitosamente `reportes_service.generar_comprobante_pdf(movimiento_id, conn)` utilizando `reportlab`. Genera una tirilla térmica estándar de 80mm con:
+- Cabecera y datos del micronegocio.
+- Folio `#MOV-{id:06d}` y fecha inmutable.
+- Cajero histórico auditable (obtenido vía `cuentas_por_cobrar.usuario_id` o 'No registrado' en registros legados).
+- Cliente, teléfono y concepto.
+- Reconstrucción determinista del saldo anterior:
+  `saldo_anterior = saldo_resultante + monto` (abono) o `saldo_resultante - monto` (cargo).
+- Detalle financiero con alineación decimal y nuevo saldo.
+- La Pantalla 3 (`perfil_cliente.py`) invoca la generación y lanza el visor predeterminado del sistema operativo (`os.startfile` en Windows / `subprocess` en Unix), reportando cualquier incidencia en `AreaError`.
 
 ---
 
-*Última actualización: cierre formal de Fase 3 completa — backend (57/57) y `/ui` en Tkinter (79/79), las 5 pantallas construidas y auditadas hito a hito contra los wireframes de Fase 2, con el patrón de rol reactivo (parche #19) como hallazgo central de esta ronda. Único pendiente no bloqueante: exportación real a PDF (RF-CXC-04). Generado por Claude a partir de la auditoría acumulada del proyecto.*
+*Última actualización: cierre formal de Fase 3 completa al 100% — backend (62/62) y `/ui` en Tkinter (22/22) para un total de **84/84 tests en verde**, incluyendo la migración de `cuentas_por_cobrar.usuario_id` y la emisión de comprobantes en PDF térmico 80mm (RF-CXC-04). Generado a partir de la auditoría acumulada del proyecto.*

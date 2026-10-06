@@ -178,6 +178,7 @@ def test_venta_credito_autorizada_clases_a_b(db_conn):
     cxc = cursor.fetchone()
     assert cxc is not None
     assert cxc["cliente_id"] == 1
+    assert cxc["usuario_id"] == 1
     assert cxc["tipo_movimiento"] == "cargo"
     assert cxc["monto"] == 100.0
     assert cxc["saldo_resultante"] == 100.0
@@ -481,6 +482,7 @@ def test_venta_credito_con_abono_inicial_registra_solo_saldo_pendiente(db_conn):
     cursor.execute("SELECT * FROM cuentas_por_cobrar WHERE venta_id = ?", (venta.id,))
     cxc = cursor.fetchone()
     assert cxc is not None
+    assert cxc["usuario_id"] == 1
     assert cxc["tipo_movimiento"] == "cargo"
     assert cxc["monto"] == 65.0
     assert cxc["saldo_resultante"] == 65.0

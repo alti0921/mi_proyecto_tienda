@@ -1,6 +1,11 @@
+import os
 import sqlite3
+import tempfile
 from datetime import date, datetime
 from typing import Dict, Any, List, Optional, Tuple
+
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
 
 import services.scoring_service as scoring_service
 from services.scoring_service import (
@@ -320,3 +325,181 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
         "conteo_por_banda": conteo_por_banda,
         "deudores": deudores,
     }
+
+
+def generar_comprobante_pdf(
+    movimiento_id: int,
+    conn: sqlite3.Connection,
+    ruta_salida: Optional[str] = None,
+) -> str:
+    """
+    RF-CXC-04. Genera el comprobante en PDF de un movimiento (cargo o abono) de
+    cuentas_por_cobrar en formato tirilla térmica 80mm.
+    Reconstruye:
+    - saldo_anterior = saldo_resultante + monto (para abonos) o saldo_resultante - monto (para cargos)
+      directamente del registro inmutable.
+    - cajero: obtenido de usuarios.nombre vía movimiento.usuario_id
+      (o 'No registrado' si es NULL).
+    Si ruta_salida es None, escribe en un archivo temporal (.pdf) y retorna la ruta absoluta.
+    """
+    if conn is None:
+        raise ValueError("Se requiere una conexión activa a la base de datos (conn).")
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT 
+            cxc.id,
+            cxc.cliente_id,
+            cxc.venta_id,
+            cxc.usuario_id,
+            cxc.tipo_movimiento,
+            cxc.monto,
+            cxc.saldo_resultante,
+            cxc.descripcion,
+            cxc.fecha_movimiento,
+            cli.nombre AS cliente_nombre,
+            cli.telefono AS cliente_telefono,
+            u.nombre AS cajero_nombre
+        FROM cuentas_por_cobrar cxc
+        JOIN clientes cli ON cxc.cliente_id = cli.id
+        LEFT JOIN usuarios u ON cxc.usuario_id = u.id
+        WHERE cxc.id = ?
+        """,
+        (movimiento_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"Movimiento de cuentas_por_cobrar con ID {movimiento_id} no encontrado.")
+
+    tipo = row["tipo_movimiento"]
+    monto = float(row["monto"])
+    saldo_resultante = float(row["saldo_resultante"])
+
+    # Reconstrucción inmutable del saldo anterior
+    if tipo == "abono":
+        saldo_anterior = round(saldo_resultante + monto, 2)
+        concepto_titulo = ">>> ABONO A CARTERA <<<"
+        label_monto = "Valor Abonado:"
+    else:
+        saldo_anterior = round(saldo_resultante - monto, 2)
+        concepto_titulo = ">>> CARGO POR VENTA A CRÉDITO <<<"
+        label_monto = "Valor Cargado:"
+
+    cajero = row["cajero_nombre"] if row["cajero_nombre"] else "No registrado"
+    cliente = row["cliente_nombre"] or "Cliente General"
+    telefono = row["cliente_telefono"] or "No registrado"
+    descripcion = row["descripcion"] or ("Abono de cartera" if tipo == "abono" else "Venta a crédito")
+    fecha_mov = row["fecha_movimiento"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Ruta de destino
+    if ruta_salida is None:
+        temp_dir = tempfile.gettempdir()
+        ruta_salida = os.path.join(temp_dir, f"comprobante_cxc_{movimiento_id:06d}.pdf")
+    else:
+        ruta_salida = os.path.abspath(ruta_salida)
+
+    # Dimensiones térmicas: 80 mm de ancho (~226.77 pt), 160 mm de alto
+    w = 80 * mm
+    h = 160 * mm
+    c = canvas.Canvas(ruta_salida, pagesize=(w, h))
+
+    # Márgenes y coordenadas
+    x_left = 6 * mm
+    x_right = w - 6 * mm
+    x_center = w / 2.0
+    y = h - 8 * mm
+
+    # 1. Encabezado del micronegocio
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(x_center, y, "MI TIENDA DE ABARROTES")
+    y -= 4 * mm
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(x_center, y, "Sistema POS & Scoring de Microtienda")
+    y -= 3.5 * mm
+    c.setFont("Helvetica", 7)
+    c.drawCentredString(x_center, y, "NIT: 123456789-0 | Barranquilla, Atlántico")
+    y -= 3 * mm
+
+    # Separador punteado
+    c.setDash(2, 2)
+    c.setLineWidth(0.5)
+    c.line(x_left, y, x_right, y)
+    y -= 4 * mm
+
+    # 2. Folio y Fecha
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(x_center, y, f"#MOV-{movimiento_id:06d}")
+    y -= 3.5 * mm
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(x_center, y, str(fecha_mov))
+    y -= 3 * mm
+
+    # Separador
+    c.line(x_left, y, x_right, y)
+    y -= 4 * mm
+
+    # 3. Datos del cajero y cliente
+    c.setFont("Helvetica", 8)
+    c.drawString(x_left, y, "Cajero:")
+    cajero_trunc = (cajero[:22] + "..") if len(cajero) > 24 else cajero
+    c.drawRightString(x_right, y, cajero_trunc)
+    y -= 4 * mm
+
+    c.drawString(x_left, y, "Cliente:")
+    cliente_trunc = (cliente[:22] + "..") if len(cliente) > 24 else cliente
+    c.drawRightString(x_right, y, cliente_trunc)
+    y -= 4 * mm
+
+    c.drawString(x_left, y, "Teléfono:")
+    c.drawRightString(x_right, y, str(telefono)[:24])
+    y -= 3 * mm
+
+    # Separador
+    c.line(x_left, y, x_right, y)
+    y -= 4 * mm
+
+    # 4. Concepto y Tipo de Movimiento
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawCentredString(x_center, y, concepto_titulo)
+    y -= 3.5 * mm
+    c.setFont("Helvetica-Oblique", 7.5)
+    desc_trunc = (descripcion[:32] + "..") if len(descripcion) > 34 else descripcion
+    c.drawCentredString(x_center, y, desc_trunc)
+    y -= 3 * mm
+
+    # Separador
+    c.line(x_left, y, x_right, y)
+    y -= 4.5 * mm
+
+    # 5. Detalle Financiero Reconstruido
+    c.setFont("Helvetica", 8)
+    c.drawString(x_left, y, "Saldo Anterior:")
+    c.drawRightString(x_right, y, f"$ {saldo_anterior:,.2f} COP")
+    y -= 4 * mm
+
+    c.drawString(x_left, y, label_monto)
+    c.drawRightString(x_right, y, f"$ {monto:,.2f} COP")
+    y -= 3 * mm
+
+    c.line(x_left, y, x_right, y)
+    y -= 4.5 * mm
+
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x_left, y, "NUEVO SALDO:")
+    c.drawRightString(x_right, y, f"$ {saldo_resultante:,.2f} COP")
+    y -= 3 * mm
+
+    # Separador
+    c.line(x_left, y, x_right, y)
+    y -= 5 * mm
+
+    # 6. Pie de página
+    c.setFont("Helvetica-Oblique", 7)
+    c.drawCentredString(x_center, y, "¡Gracias por su pago oportuno y su confianza!")
+    y -= 3.5 * mm
+    c.setFont("Helvetica", 6.5)
+    c.drawCentredString(x_center, y, "Conserve este soporte para cualquier aclaración.")
+
+    c.save()
+    return ruta_salida

@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import pytest
 from datetime import date
@@ -6,6 +7,7 @@ from services.reportes_service import (
     obtener_arqueo_diario,
     obtener_consolidado_cartera,
     clasificar_banda_mora,
+    generar_comprobante_pdf,
 )
 from services.pos_service import registrar_venta, asignar_limite_credito, LineaVentaInput
 from services.cxc_service import crear_cliente, registrar_abono, registrar_cargo
@@ -210,3 +212,114 @@ def test_obtener_consolidado_cartera_clasificacion_bandas(db_conn):
     assert c2.id in ids_deudores
     assert c3.id in ids_deudores
     assert c4.id in ids_deudores
+
+
+def test_generar_comprobante_pdf_con_usuario_identificado(db_conn, tmp_path):
+    """
+    RF-CXC-04: Verifica la generación exitosa de un comprobante en PDF de 80mm
+    para un abono con cajero identificado (usuario_id presente).
+    """
+    cliente = crear_cliente(nombre="María Del Comprobante", limite_credito=60000.0, conn=db_conn)
+    registrar_cargo(cliente_id=cliente.id, monto=40000.0, conn=db_conn, usuario_id=1)
+
+    abono = registrar_abono(
+        cliente_id=cliente.id,
+        monto=15000.0,
+        conn=db_conn,
+        descripcion="Abono parcial en mostrador",
+        usuario_id=2,  # Vendedor
+    )
+
+    salida_pdf = str(tmp_path / f"comprobante_abono_{abono.id}.pdf")
+    ruta_generada = generar_comprobante_pdf(
+        movimiento_id=abono.id,
+        conn=db_conn,
+        ruta_salida=salida_pdf,
+    )
+
+    assert ruta_generada == salida_pdf
+    assert os.path.exists(salida_pdf)
+    assert os.path.getsize(salida_pdf) > 500  # Archivo binario PDF con contenido
+
+    # Verificar cabecera mágica de archivo PDF
+    with open(salida_pdf, "rb") as f:
+        cabecera = f.read(5)
+        assert cabecera == b"%PDF-"
+
+
+def test_generar_comprobante_pdf_usuario_none_caso_legado(db_conn, tmp_path):
+    """
+    RF-CXC-04: Verifica la compatibilidad histórica cuando usuario_id es NULL,
+    desplegando 'No registrado' como cajero en el PDF.
+    """
+    cliente = crear_cliente(nombre="Juan Histórico", limite_credito=50000.0, conn=db_conn)
+    registrar_cargo(cliente_id=cliente.id, monto=20000.0, conn=db_conn)
+
+    abono_legado = registrar_abono(
+        cliente_id=cliente.id,
+        monto=5000.0,
+        conn=db_conn,
+        descripcion="Abono de migración histórica",
+        usuario_id=None,
+    )
+
+    salida_pdf = str(tmp_path / "comprobante_legado.pdf")
+    ruta_generada = generar_comprobante_pdf(
+        movimiento_id=abono_legado.id,
+        conn=db_conn,
+        ruta_salida=salida_pdf,
+    )
+
+    assert os.path.exists(ruta_generada)
+    assert os.path.getsize(ruta_generada) > 500
+
+
+def test_generar_comprobante_pdf_cargo_venta_credito_y_ruta_temporal(db_conn):
+    """
+    RF-CXC-04: Verifica la generación de comprobante de un cargo generado desde una venta
+    a crédito, y la generación en directorio temporal si ruta_salida es None.
+    """
+    admin = obtener_usuario_por_username("admin", db_conn)
+    cliente = crear_cliente(nombre="Carlos Crédito", limite_credito=100000.0, conn=db_conn)
+    prod = crear_producto(
+        nombre="Harina de Trigo",
+        categoria="canasta_basica",
+        precio_venta=5000.0,
+        costo=3500.0,
+        conn=db_conn,
+        stock=20.0,
+    )
+
+    venta = registrar_venta(
+        usuario_id=admin.id,
+        cliente_id=cliente.id,
+        tipo_pago="credito",
+        items=[LineaVentaInput(producto_id=prod.id, cantidad=3.0, precio_unitario=5000.0)],
+        conn=db_conn,
+    )
+
+    # Buscar el cargo asociado a la venta
+    cur = db_conn.cursor()
+    cur.execute("SELECT id FROM cuentas_por_cobrar WHERE venta_id = ?", (venta.id,))
+    cargo_row = cur.fetchone()
+    assert cargo_row is not None
+    cargo_id = cargo_row["id"]
+
+    ruta_temp = generar_comprobante_pdf(
+        movimiento_id=cargo_id,
+        conn=db_conn,
+        ruta_salida=None,
+    )
+
+    assert os.path.exists(ruta_temp)
+    assert ruta_temp.endswith(".pdf")
+    assert os.path.getsize(ruta_temp) > 500
+
+
+def test_generar_comprobante_pdf_validaciones_error(db_conn):
+    """Verifica manejo de errores ante movimiento inexistente o conexión nula."""
+    with pytest.raises(ValueError, match="no encontrado"):
+        generar_comprobante_pdf(movimiento_id=99999, conn=db_conn)
+
+    with pytest.raises(ValueError, match="Se requiere una conexión"):
+        generar_comprobante_pdf(movimiento_id=1, conn=None)

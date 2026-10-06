@@ -57,9 +57,9 @@ python -m venv venv
   ```
 
 ### Paso 4: Instalar dependencias
-La aplicación de producción utiliza exclusivamente la biblioteca estándar de Python (`sqlite3`, `tkinter`, `dataclasses`, `hashlib`, `hmac`). Únicamente se requiere `pytest` para la ejecución de la suite de pruebas automatizadas:
+La aplicación utiliza la biblioteca estándar de Python (`sqlite3`, `tkinter`, `dataclasses`, `hashlib`, `hmac`). Se requiere `reportlab` para la generación de comprobantes en PDF de formato térmico 80mm (RF-CXC-04) y `pytest` para la ejecución de pruebas:
 ```bash
-pip install pytest
+pip install pytest reportlab
 ```
 
 ---
@@ -104,7 +104,7 @@ python -m ui.app
 ### Recorrido por las 5 Pantallas del Sistema:
 1. **Pantalla 1 — Login (`login.py`):** Autenticación de credenciales, alternador de visibilidad de contraseña y manejo genérico de errores (previene enumeración de usuarios).
 2. **Pantalla 2 — Punto de Venta / POS (`pos.py`):** Catálogo de productos, buscador predictivo, venta rápida por monto global (RF-POS-02), carrito en memoria, cobro en efectivo/Nequi/crédito con cálculo de cambio, registro de anticipos en ventas a crédito (RF-POS-04) y visualización del badge de riesgo del cliente.
-3. **Pantalla 3 — Perfil de Cliente & CxC (`perfil_cliente.py`):** Ficha demográfica editable, motor de scoring en vivo con recálculo dinámico en caliente ante cambios de vínculo social (SW3), sugerencia de cupo semilla para clientes nuevos (Cold-Start), asignación auditable de cupos (solo admin) y registro de abonos sobre historial inmutable.
+3. **Pantalla 3 — Perfil de Cliente & CxC (`perfil_cliente.py`):** Ficha demográfica editable, motor de scoring en vivo con recálculo dinámico en caliente ante cambios de vínculo social (SW3), sugerencia de cupo semilla para clientes nuevos (Cold-Start), asignación auditable de cupos (solo admin), registro de abonos sobre historial inmutable y **emisión de comprobantes digitales en PDF térmico 80mm con visor del sistema (RF-CXC-04)**.
 4. **Pantalla 4 — Gestión de Inventario (`inventario.py`):** Catálogo maestro-detalle, resaltado en ámbar de productos bajo el umbral mínimo (RF-INV-03), badge global de alertas, formularios de creación/edición/baja lógica (solo admin) y stepper de ajuste de stock en unidades enteras (RS-05).
 5. **Pantalla 5 — Reportes Operativos (`reportes.py`):** Contenedor con pestañas:
    - *Arqueo Diario:* Consulta por fecha, 5 tarjetas KPI con cálculo certificado de caja física (`ventas_efectivo + anticipos_credito + abonos_cxc`) y tabla cronológica de transacciones.
@@ -114,7 +114,7 @@ python -m ui.app
 
 ## 7. Ejecución de la Suite de Pruebas Automatizadas
 
-El proyecto cuenta con una cobertura integral de **79 pruebas automatizadas** que validan la capa de seguridad, integridad contable, motor analítico y reactividad de la interfaz gráfica.
+El proyecto cuenta con una cobertura integral de **84 pruebas automatizadas** que validan la capa de seguridad, integridad contable, motor analítico, generación de comprobantes y reactividad de la interfaz gráfica.
 
 Para correr toda la suite con detalle de ejecución:
 
@@ -122,14 +122,14 @@ Para correr toda la suite con detalle de ejecución:
 pytest -v
 ```
 
-### Distribución de la Suite (79 Tests):
+### Distribución de la Suite (84 Tests):
 - `tests/test_auth.py` (8 tests): Hashing seguro SHA-256 + salt, verificación resistente a timing attacks (`hmac.compare_digest`), autenticación case-insensitive (`COLLATE NOCASE`).
-- `tests/test_cxc.py` (12 tests): Inmutabilidad append-only contra triggers SQL, control de límites de cupo (RF-CXC-06), prevención de saldos negativos, actualización de vínculo.
+- `tests/test_cxc.py` (13 tests): Inmutabilidad append-only contra triggers SQL, control de límites de cupo (RF-CXC-06), prevención de saldos negativos, actualización de vínculo, persistencia auditable de `usuario_id` en cargos y abonos.
 - `tests/test_inventario.py` (13 tests): Unicidad de códigos de barra, redondeo direccional conservador (`math.floor` en salidas / `math.ceil` en entradas), baja lógica con `ValueError`.
-- `tests/test_pos.py` (12 tests): Orquestador atómico, bloqueo de ventas a crédito en Clase D (RF-SCR-03), regla de desbloqueo Clase C mediante abono $\ge 50\%$ (RF-SCR-04), transaccionalidad compuesta `auto_commit=False`.
-- `tests/test_reportes.py` (4 tests): Consolidación de arqueo de caja física, integración estricta de bandas de mora (`PLAZO_ESTANDAR_DIAS = 8`) con `scoring_service`.
+- `tests/test_pos.py` (12 tests): Orquestador atómico, bloqueo de ventas a crédito en Clase D (RF-SCR-03), regla de desbloqueo Clase C mediante abono $\ge 50\%$ (RF-SCR-04), transaccionalidad compuesta `auto_commit=False`, propagación de `usuario_id` al ledger.
+- `tests/test_reportes.py` (8 tests): Consolidación de arqueo de caja física, integración estricta de bandas de mora (`PLAZO_ESTANDAR_DIAS = 8`) con `scoring_service`, **generación de comprobantes térmicos en PDF 80mm (`generar_comprobante_pdf`), validación de cajero histórico y caso legado**.
 - `tests/test_scoring.py` (8 tests): Fórmulas de scoring ponderado ($S = 0.40 \cdot SW1 + 0.35 \cdot SW2 + 0.25 \cdot SW3$), rangos empíricos P-Q9 en mora efectiva, protocolo Cold-Start con desactivación por mora.
-- `tests/test_ui.py` (22 tests): Ciclo de vida de sesión, componentes visuales, conmutación reactiva de permisos entre roles en caliente (Parche #19), flujo completo del POS, historial append-only, ajuste con signo en inventario y bloqueo de pestañas en reportes.
+- `tests/test_ui.py` (22 tests): Ciclo de vida de sesión, componentes visuales, conmutación reactiva de permisos entre roles en caliente (Parche #19), flujo completo del POS, historial append-only, emisión de PDF desde perfil de cliente, ajuste con signo en inventario y bloqueo de pestañas en reportes.
 
 ---
 

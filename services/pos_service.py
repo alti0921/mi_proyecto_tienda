@@ -261,6 +261,7 @@ def registrar_venta(
                 venta_id=venta_id,
                 descripcion=f"Venta a crédito #{venta_id}",
                 auto_commit=False,
+                usuario_id=usuario_id,
             )
 
             # Registrar snapshot de scoring sin commit interno

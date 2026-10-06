@@ -373,3 +373,39 @@ def test_cliente_property_cupo_disponible(db_conn):
     cli_tope = crear_cliente(nombre="Don José Cupo Cero", limite_credito=0.0, conn=db_conn)
     assert cli_tope.cupo_disponible == 0.0
 
+
+def test_cxc_persistencia_usuario_id_en_cargos_y_abonos(db_conn):
+    """
+    RF-CXC-04: Verifica que registrar_cargo y registrar_abono persistan
+    el usuario_id en la tabla inmutable cuentas_por_cobrar para auditoría de cajero.
+    """
+    cliente = crear_cliente(nombre="Ana Auditada", limite_credito=80000.0, conn=db_conn)
+
+    cargo = registrar_cargo(
+        cliente_id=cliente.id,
+        monto=30000.0,
+        conn=db_conn,
+        descripcion="Cargo a crédito auditado",
+        usuario_id=1,
+    )
+    assert cargo.usuario_id == 1
+
+    # Validar persistencia directa en SQLite
+    cur = db_conn.cursor()
+    cur.execute("SELECT usuario_id FROM cuentas_por_cobrar WHERE id = ?", (cargo.id,))
+    row_cargo = cur.fetchone()
+    assert row_cargo["usuario_id"] == 1
+
+    abono = registrar_abono(
+        cliente_id=cliente.id,
+        monto=10000.0,
+        conn=db_conn,
+        descripcion="Abono recibido por cajero 2",
+        usuario_id=2,
+    )
+    assert abono.usuario_id == 2
+
+    cur.execute("SELECT usuario_id FROM cuentas_por_cobrar WHERE id = ?", (abono.id,))
+    row_abono = cur.fetchone()
+    assert row_abono["usuario_id"] == 2
+

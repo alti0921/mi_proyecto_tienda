@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import pytest
 import tkinter as tk
@@ -613,8 +614,13 @@ def test_perfil_cliente_historial_inmutable_y_cascada_abono(ui_app):
     assert "Score:" in cxc_frame.lbl_score_valor.cget("text")
     assert cxc_frame.lbl_badge_clase.cget("text") != "Clase: --"
 
-    # 4. Comprobante digital
+    # 4. Comprobante digital en PDF 80mm (RF-CXC-04)
+    archivos_abiertos = []
+    cxc_frame._abrir_pdf_sistema = lambda ruta: archivos_abiertos.append(ruta)
     cxc_frame._ver_comprobante()
+    assert len(archivos_abiertos) == 1
+    assert os.path.exists(archivos_abiertos[0])
+    assert archivos_abiertos[0].endswith(".pdf")
 
 
 def test_perfil_cliente_cambio_vinculo_recalcula_score_en_caliente(ui_app):
