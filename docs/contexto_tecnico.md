@@ -334,9 +334,15 @@ def registrar_venta(
        a. inventario_service.ajustar_stock(producto_id, -cantidad, conn, auto_commit=False)
        b. INSERT ventas, INSERT venta_detalle
        c. Si credito: monto_a_fiar = round(total - monto_pagado, 2)
-          cxc_service.registrar_cargo(cliente_id=cliente_id, monto=monto_a_fiar, conn=conn,
-                                       venta_id=venta_id, descripcion=f"Venta a crédito #{venta_id}",
-                                       auto_commit=False, usuario_id=usuario_id)
+          cxc_service.registrar_cargo(
+              cliente_id=cliente_id,
+              monto=monto_a_fiar,
+              conn=conn,
+              venta_id=venta_id,
+              descripcion=f"Venta a crédito #{venta_id}",
+              auto_commit=False,
+              usuario_id=usuario_id,
+          )
           scoring_service.registrar_snapshot(..., auto_commit=False)
        d. conn.commit() unificado / except: conn.rollback() + re-raise
     """
