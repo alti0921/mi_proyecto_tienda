@@ -409,8 +409,12 @@ import hashlib
 import hmac
 import secrets
 
-def hashear_password(password: str) -> str:
+def generar_password_hash(password: str, salt: Optional[str] = None) -> str:
     # sha256$<salt_hex>$<hash_hex>, salt = secrets.token_hex(16)
+    ...
+
+def verificar_password(password: str, hash_almacenado: str) -> bool:
+    # hmac.compare_digest(hash_calculado, hash_esperado)
     ...
 
 def autenticar_usuario(username: str, password: str, conn: sqlite3.Connection) -> Optional[Usuario]:
