@@ -1028,5 +1028,73 @@ def test_reportes_consolidado_cartera_filtros_memoria_y_colores(ui_app):
     assert len(rep.tree_cartera.get_children()) == len(rep._deudores_cache)
 
 
+def test_ui_pos_visualizacion_veto_r1(ui_app, crear_cliente_score_alto):
+    """
+    Verifica que en la pantalla POS, al seleccionar un cliente con veto R1
+    (16 días de cargo pendiente -> 8 días de mora efectiva), la tarjeta de scoring
+    muestre 'Veto R1: 8 días de mora' y 'Requiere abono previo >= 50%'.
+    """
+    conn = ui_app.sesion.conn
+    cid = crear_cliente_score_alto(conn, dias_cargo_pendiente=16)
+    cliente = cxc_service.obtener_cliente(cid, conn)
+
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    pos.al_mostrar()
+
+    etiqueta = f"{cliente.nombre} (ID: {cliente.id})"
+    pos.combo_clientes.set(etiqueta)
+    pos._on_cliente_seleccionado()
+
+    texto_scoring = pos.lbl_card_scoring.cget("text")
+    assert "Veto R1: 8 días de mora" in texto_scoring
+    assert "Requiere abono previo >= 50%" in texto_scoring
+
+
+def test_ui_perfil_cliente_visualizacion_veto_r1(ui_app, crear_cliente_score_alto):
+    """
+    Verifica que en la pantalla Perfil de Cliente, al cargar un cliente con veto R1,
+    el desglose de factores muestre la transición 'Clase por puntaje: ... → Clase final: C (veto R1)'
+    y el badge de clase refleje 'Clase C'.
+    """
+    conn = ui_app.sesion.conn
+    cid = crear_cliente_score_alto(conn, dias_cargo_pendiente=16)
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cid)
+
+    factores_texto = cxc_frame.lbl_factores.cget("text")
+    assert "veto R1" in factores_texto
+    assert "Clase final: C" in factores_texto
+    assert "Clase C" in cxc_frame.lbl_badge_clase.cget("text")
+    assert "Regla de veto R1" in cxc_frame.lbl_decision_accion.cget("text")
+
+
+def test_ui_pos_cold_start_clase_c_sin_exigencia_abono(ui_app):
+    """
+    Verifica que en la pantalla POS, al seleccionar un cliente en cold-start con clase indicativa C,
+    la tarjeta muestre 'Cold-start' y NO contenga 'Requiere abono previo'.
+    """
+    conn = ui_app.sesion.conn
+    cliente = cxc_service.crear_cliente(
+        nombre="Cliente CS Solo Apodo",
+        nivel_vinculo="solo_apodo",
+        conn=conn,
+    )
+
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    pos.al_mostrar()
+
+    etiqueta = f"{cliente.nombre} (ID: {cliente.id})"
+    pos.combo_clientes.set(etiqueta)
+    pos._on_cliente_seleccionado()
+
+    texto_scoring = pos.lbl_card_scoring.cget("text")
+    assert "Cold-start" in texto_scoring
+    assert "Requiere abono previo" not in texto_scoring
+
+
 
 

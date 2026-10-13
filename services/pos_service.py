@@ -197,22 +197,21 @@ def registrar_venta(
             raise ValueError(f"Cliente ID {cliente_id} no encontrado o inactivo.")
 
         # Evaluación de riesgo crediticio con scoring fresco
-        cold_start = scoring_service.evaluar_cold_start(cliente_id, conn)
-        if cold_start.get("es_cold_start"):
-            score_actual = float(cold_start["score_semilla"])
-            decision = cold_start["decision"]
-            categoria_riesgo = decision["categoria_riesgo"]
-        else:
-            score_actual, categoria_riesgo = scoring_service.calcular_score(cliente_id, conn)
-            decision = scoring_service.aplicar_matriz_decision(score_actual)
+        ev = scoring_service.evaluar_cliente(cliente_id, conn)
+        score_actual = ev["score"]
+        categoria_riesgo = ev["clase_final"]
+        decision = ev["decision"]
 
-        if decision.get("bloqueado") or categoria_riesgo == "D":
-            raise ValueError(
-                f"Crédito rechazado (RF-SCR-03): El cliente está en {decision.get('nivel_riesgo', 'Clase D')} "
-                f"(Score: {score_actual}). Crédito bloqueado."
+        if ev["clase_final"] == "D":
+            msg = (
+                f"Crédito rechazado (RF-SCR-03): El cliente está en "
+                f"{decision.get('nivel_riesgo', 'Clase D')} (Score: {score_actual}). Crédito bloqueado."
             )
+            if ev.get("veto_aplicado") == "R2":
+                msg += f" Regla de veto R2: {ev['dias_mora_efectiva']} días de mora efectiva."
+            raise ValueError(msg)
 
-        if (decision.get("congelado") or categoria_riesgo == "C") and not cold_start.get("es_cold_start"):
+        if ev["clase_final"] == "C" and not ev["es_cold_start"]:
             _validar_credito_clase_c(cliente_id, conn)
 
     # Iniciar bloque transaccional atómico

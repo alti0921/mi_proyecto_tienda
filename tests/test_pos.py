@@ -491,3 +491,70 @@ def test_venta_credito_con_abono_inicial_registra_solo_saldo_pendiente(db_conn):
     cursor.execute("SELECT saldo_actual FROM clientes WHERE id = 1")
     assert cursor.fetchone()["saldo_actual"] == saldo_inicial + 65.0
 
+
+def test_venta_credito_rechazada_por_veto_r2(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que un cliente con puntaje naturalmente alto pero con mora efectiva > 10 días
+    (19 días desde cargo pendiente -> 11 días de mora efectiva) es vetado por R2 a Clase D,
+    y pos_service.registrar_venta rechaza el crédito indicando la regla de veto R2.
+    """
+    cid = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=19)
+    items = [LineaVentaInput(producto_id=1, cantidad=1.0, precio_unitario=1000.0)]
+
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM ventas")
+    ventas_antes = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM cuentas_por_cobrar WHERE cliente_id = ?", (cid,))
+    cxc_antes = cursor.fetchone()[0]
+
+    cursor.execute("SELECT stock FROM productos WHERE id = 1")
+    stock_antes = cursor.fetchone()[0]
+
+    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cid,))
+    saldo_antes = cursor.fetchone()[0]
+
+    with pytest.raises(ValueError, match="Crédito rechazado.*Clase D.*Regla de veto R2: 11 días de mora efectiva"):
+        registrar_venta(
+            usuario_id=1,
+            tipo_pago="credito",
+            items=items,
+            conn=db_conn,
+            cliente_id=cid,
+            monto_pagado=0.0,
+        )
+
+    cursor.execute("SELECT COUNT(*) FROM ventas")
+    assert cursor.fetchone()[0] == ventas_antes
+
+    cursor.execute("SELECT COUNT(*) FROM cuentas_por_cobrar WHERE cliente_id = ?", (cid,))
+    assert cursor.fetchone()[0] == cxc_antes
+
+    cursor.execute("SELECT stock FROM productos WHERE id = 1")
+    assert cursor.fetchone()[0] == stock_antes
+
+    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cid,))
+    saldo_despues = cursor.fetchone()[0]
+    assert saldo_despues == saldo_antes
+    assert saldo_despues == 20000.0
+
+
+def test_venta_credito_veto_r1_exige_abono_previo(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que un cliente con puntaje naturalmente alto pero con mora efectiva en [7, 10] días
+    (16 días desde cargo pendiente -> 8 días de mora efectiva) es vetado por R1 a Clase C,
+    y pos_service.registrar_venta rechaza el crédito exigiendo abono previo >= 50%.
+    """
+    cid = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+    items = [LineaVentaInput(producto_id=1, cantidad=1.0, precio_unitario=1000.0)]
+
+    with pytest.raises(ValueError, match="Crédito rechazado.*Clase C.*Requiere un abono previo"):
+        registrar_venta(
+            usuario_id=1,
+            tipo_pago="credito",
+            items=items,
+            conn=db_conn,
+            cliente_id=cid,
+            monto_pagado=0.0,
+        )
+

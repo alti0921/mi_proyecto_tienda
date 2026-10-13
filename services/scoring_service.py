@@ -23,6 +23,24 @@ def calcular_v1_1(dias_mora_efectiva: int) -> float:
         return 0.0
 
 
+def clasificar_banda_mora(dias_mora_efectiva: int) -> Tuple[str, str]:
+    """
+    Clasifica los días de mora efectiva en las 4 bandas exactas del sistema de scoring (P-Q9 / V1.1 / RF-REP-02):
+    - 0 a 3 días: vigente_0_3 (Cartera Vigente)
+    - 4 a 6 días: preventiva_4_6 (Alerta Preventiva)
+    - 7 a 10 días: congelada_7_10 (Cartera Congelada / Clase C)
+    - >10 días: critica_mas_10 (Cartera Crítica / Bloqueada / Clase D)
+    """
+    if dias_mora_efectiva <= 3:
+        return ("vigente_0_3", "Cartera Vigente (0 a 3 días)")
+    elif 4 <= dias_mora_efectiva <= 6:
+        return ("preventiva_4_6", "Alerta Preventiva (4 a 6 días)")
+    elif 7 <= dias_mora_efectiva <= 10:
+        return ("congelada_7_10", "Cartera Congelada (7 a 10 días)")
+    else:
+        return ("critica_mas_10", "Cartera Crítica (> 10 días)")
+
+
 def _obtener_dias_transcurridos(cliente_id: int, conn: sqlite3.Connection) -> int:
     """
     Calcula los días transcurridos desde el CARGO PENDIENTE MÁS ANTIGUO del cliente,
@@ -396,6 +414,7 @@ def evaluar_cliente(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]
     Aplica ponderación de subvariables o protocolo Cold-Start, seguido de las
     reglas de veto R1 y R2 por mora efectiva.
     """
+    dias_transcurridos = _obtener_dias_transcurridos(cliente_id, conn)
     dias_mora_efectiva = calcular_mora_efectiva(cliente_id, conn)
     cs = evaluar_cold_start(cliente_id, conn)
 
@@ -408,6 +427,7 @@ def evaluar_cliente(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]
             "sw1": None,
             "sw2": None,
             "sw3": None,
+            "dias_transcurridos": dias_transcurridos,
             "dias_mora_efectiva": dias_mora_efectiva,
             "clase_puntaje": clase_cs,
             "clase_final": clase_cs,
@@ -437,6 +457,7 @@ def evaluar_cliente(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]
         "sw1": sw1,
         "sw2": sw2,
         "sw3": sw3,
+        "dias_transcurridos": dias_transcurridos,
         "dias_mora_efectiva": dias_mora_efectiva,
         "clase_puntaje": clase_puntaje,
         "clase_final": clase_final,

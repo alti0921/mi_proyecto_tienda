@@ -11,6 +11,7 @@ from services.scoring_service import (
     aplicar_reglas_veto,
     decision_por_clase,
     evaluar_cliente,
+    clasificar_banda_mora,
 )
 from services.inventario_service import (
     crear_producto,
@@ -50,7 +51,6 @@ from services.auth_service import (
 from services.reportes_service import (
     obtener_arqueo_diario,
     obtener_consolidado_cartera,
-    clasificar_banda_mora,
 )
 
 __all__ = [

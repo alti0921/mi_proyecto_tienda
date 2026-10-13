@@ -323,3 +323,39 @@ def test_generar_comprobante_pdf_validaciones_error(db_conn):
 
     with pytest.raises(ValueError, match="Se requiere una conexión"):
         generar_comprobante_pdf(movimiento_id=1, conn=None)
+
+
+def test_consolidado_cartera_fifo_y_clase_final(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que obtener_consolidado_cartera calcule la antigüedad con FIFO,
+    refleje la clase final con reglas de veto R1 y R2, e incluya clase_puntaje y veto_aplicado.
+    """
+    cid_16 = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+    cid_19 = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=19)
+
+    reporte = obtener_consolidado_cartera(db_conn)
+    deudores = {d["cliente_id"]: d for d in reporte["deudores"]}
+
+    assert cid_16 in deudores
+    d16 = deudores[cid_16]
+    assert d16["dias_transcurridos"] == 16
+    assert d16["dias_mora_efectiva"] == 8
+    assert d16["clase_riesgo"] == "C"
+    assert d16["veto_aplicado"] == "R1"
+    assert d16["clase_puntaje"] in ("A", "B")
+    assert d16["banda"] == "congelada_7_10"
+
+    assert cid_19 in deudores
+    d19 = deudores[cid_19]
+    assert d19["dias_transcurridos"] == 19
+    assert d19["dias_mora_efectiva"] == 11
+    assert d19["clase_riesgo"] == "D"
+    assert d19["veto_aplicado"] == "R2"
+    assert d19["clase_puntaje"] in ("A", "B")
+    assert d19["banda"] == "critica_mas_10"
+
+    for d in reporte["deudores"]:
+        if d["banda"] == "congelada_7_10":
+            assert d["clase_riesgo"] in ("C", "D")
+        elif d["banda"] == "critica_mas_10":
+            assert d["clase_riesgo"] == "D"

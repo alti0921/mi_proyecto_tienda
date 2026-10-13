@@ -621,22 +621,30 @@ class PantallaPerfilCliente(tk.Frame):
 
     def _actualizar_scoring_visual(self, cliente_id: int) -> None:
         """Calcula de forma fresca e instantánea el score y actualiza los badges."""
-        cold_start = scoring_service.evaluar_cold_start(cliente_id, self.sesion.conn)
-        if cold_start.get("es_cold_start"):
-            score = float(cold_start["score_semilla"])
-            decision = cold_start["decision"]
-            cat = decision["categoria_riesgo"]
+        ev = scoring_service.evaluar_cliente(cliente_id, self.sesion.conn)
+        if ev.get("es_cold_start"):
+            score = float(ev["score"])
+            decision = ev["decision"]
+            cat = ev["clase_final"]
+            cs = ev["cold_start"]
             factores_txt = (
                 f"🌱 Protocolo Cold-Start activo | Vínculo: {self.combo_vinculo.get()} | "
-                f"Ciclos completados: {cold_start.get('ciclos_completados', 0)}/3"
+                f"Ciclos completados: {cs.get('ciclos_completados', 0) if cs else 0}/3"
             )
         else:
-            score, cat = scoring_service.calcular_score(cliente_id, self.sesion.conn)
-            decision = scoring_service.aplicar_matriz_decision(score)
-            sw1 = scoring_service.calcular_sw1(cliente_id, self.sesion.conn)
-            sw2 = scoring_service.calcular_sw2(cliente_id, self.sesion.conn)
-            sw3 = scoring_service.calcular_sw3(cliente_id, self.sesion.conn)
-            factores_txt = f"📊 Desglose de Factores: SW1 (Mora 40%): {sw1:.1f} pts | SW2 (Rotación 35%): {sw2:.1f} pts | SW3 (Arraigo 25%): {sw3:.1f} pts"
+            score = ev["score"]
+            cat = ev["clase_final"]
+            decision = ev["decision"]
+            factores_txt = (
+                f"📊 Desglose de Factores: SW1 (Mora 40%): {ev['sw1']:.1f} pts | "
+                f"SW2 (Rotación 35%): {ev['sw2']:.1f} pts | "
+                f"SW3 (Arraigo 25%): {ev['sw3']:.1f} pts"
+            )
+            if ev.get("veto_aplicado"):
+                factores_txt += (
+                    f" | Clase por puntaje: {ev['clase_puntaje']} → "
+                    f"Clase final: {ev['clase_final']} (veto {ev['veto_aplicado']})"
+                )
 
         self.lbl_score_valor.config(text=f"Score: {int(round(score))} / 100")
 

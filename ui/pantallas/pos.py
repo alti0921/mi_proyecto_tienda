@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from models.cliente import Cliente
 from models.producto import Producto
 from models.venta import Venta
-from services import cxc_service, inventario_service, pos_service
+from services import cxc_service, inventario_service, pos_service, scoring_service
 from services.pos_service import LineaVentaInput
 from ui.estilos import (
     COLOR_ALERTA_BG,
@@ -748,12 +748,20 @@ class PantallaPOS(tk.Frame):
             )
 
             # Estilo del semáforo de scoring
-            cat = cliente.categoria_riesgo or "B"
+            ev = scoring_service.evaluar_cliente(cliente.id, self.sesion.conn)
+            cat = ev["clase_final"]
             estilo_cat = COLORES_SCORING.get(cat, COLORES_SCORING["B"])
-            score_txt = f"Score: {cliente.score_crediticio} | {estilo_cat['etiqueta']}"
+
+            if ev.get("es_cold_start"):
+                score_txt = f"Cold-start · {estilo_cat['etiqueta']} (indicativa)"
+            else:
+                score_txt = f"Score: {ev['score']:.1f} | {estilo_cat['etiqueta']}"
+                if ev.get("veto_aplicado"):
+                    score_txt += f" · Veto {ev['veto_aplicado']}: {ev['dias_mora_efectiva']} días de mora"
+
             if cat == "D":
                 score_txt += " 🚫 BLOQUEADO"
-            elif cat == "C":
+            elif cat == "C" and not ev.get("es_cold_start"):
                 score_txt += " ⚠️ Requiere abono previo >= 50%"
 
             self.lbl_card_scoring.config(

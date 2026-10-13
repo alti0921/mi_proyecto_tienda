@@ -552,3 +552,58 @@ def test_matriz_v2_caso_5_cold_start_solo_apodo(db_conn):
     assert eval_res["cold_start"]["cupo_semilla"] == 30000.0
 
 
+def test_evaluar_cliente_incluye_dias_transcurridos(db_conn, crear_cliente_score_alto):
+    """Verifica que evaluar_cliente incluya 'dias_transcurridos' en cold-start y no-cold-start."""
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente CS Dias', 0.0, 0.0, 60, 'B', 'solo_apodo')
+    """)
+    cid_cs = cursor.lastrowid
+    db_conn.commit()
+
+    res_cs = evaluar_cliente(cid_cs, db_conn)
+    assert res_cs["es_cold_start"] is True
+    assert "dias_transcurridos" in res_cs
+    assert res_cs["dias_transcurridos"] == 0
+
+    cid_alto = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+    res_alto = evaluar_cliente(cid_alto, db_conn)
+    assert res_alto["es_cold_start"] is False
+    assert "dias_transcurridos" in res_alto
+    assert res_alto["dias_transcurridos"] == 16
+    assert res_alto["dias_mora_efectiva"] == 8
+    assert res_alto["score"] == pytest.approx(83.2, abs=0.01)
+    assert res_alto["sw1"] == 58.0
+    assert res_alto["sw2"] == 100.0
+    assert res_alto["sw3"] == 100.0
+    assert res_alto["clase_puntaje"] == "A"
+    assert res_alto["clase_final"] == "C"
+    assert res_alto["veto_aplicado"] == "R1"
+
+    cid_19 = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=19)
+    res_19 = evaluar_cliente(cid_19, db_conn)
+    assert res_19["dias_transcurridos"] == 19
+    assert res_19["dias_mora_efectiva"] == 11
+    assert res_19["score"] == pytest.approx(76.0, abs=0.01)
+    assert res_19["clase_puntaje"] == "B"
+    assert res_19["clase_final"] == "D"
+    assert res_19["veto_aplicado"] == "R2"
+
+
+def test_clasificar_banda_mora_desde_scoring():
+    """Verifica que clasificar_banda_mora clasifique correctamente en las 4 bandas."""
+    from services.scoring_service import clasificar_banda_mora as cbm_scoring
+    from services import clasificar_banda_mora as cbm_services
+
+    assert cbm_scoring is cbm_services
+
+    assert cbm_scoring(0) == ("vigente_0_3", "Cartera Vigente (0 a 3 días)")
+    assert cbm_scoring(3) == ("vigente_0_3", "Cartera Vigente (0 a 3 días)")
+    assert cbm_scoring(4) == ("preventiva_4_6", "Alerta Preventiva (4 a 6 días)")
+    assert cbm_scoring(6) == ("preventiva_4_6", "Alerta Preventiva (4 a 6 días)")
+    assert cbm_scoring(7) == ("congelada_7_10", "Cartera Congelada (7 a 10 días)")
+    assert cbm_scoring(10) == ("congelada_7_10", "Cartera Congelada (7 a 10 días)")
+    assert cbm_scoring(11) == ("critica_mas_10", "Cartera Crítica (> 10 días)")
+
+

@@ -577,6 +577,7 @@ class PantallaReportes(tk.Frame):
         # Renderizar filas filtradas
         for d in deudores_filtrados:
             cat = d.get("clase_riesgo", "B")
+            cat_display = f"{cat} ({d['veto_aplicado']})" if d.get("veto_aplicado") else cat
             tag_name = f"clase_{cat}"
             self.tree_cartera.insert(
                 "",
@@ -585,7 +586,7 @@ class PantallaReportes(tk.Frame):
                     d.get("nombre", "--"),
                     f"${d.get('saldo_actual', 0.0):,.2f}",
                     f"{d.get('dias_mora_efectiva', 0)} días",
-                    cat,
+                    cat_display,
                     d.get("estado_banda", "--"),
                     f"${d.get('cupo_disponible', 0.0):,.2f}",
                 ),

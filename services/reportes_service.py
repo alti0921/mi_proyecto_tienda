@@ -8,30 +8,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 import services.scoring_service as scoring_service
-from services.scoring_service import (
-    PLAZO_ESTANDAR_DIAS,
-    calcular_v1_1,
-    calcular_score,
-    aplicar_matriz_decision,
-)
-
-
-def clasificar_banda_mora(dias_mora_efectiva: int) -> Tuple[str, str]:
-    """
-    Clasifica los días de mora efectiva en las 4 bandas exactas del sistema de scoring (P-Q9 / V1.1 / RF-REP-02):
-    - 0 a 3 días: vigente_0_3 (Cartera Vigente)
-    - 4 a 6 días: preventiva_4_6 (Alerta Preventiva)
-    - 7 a 10 días: congelada_7_10 (Cartera Congelada / Clase C)
-    - >10 días: critica_mas_10 (Cartera Crítica / Bloqueada / Clase D)
-    """
-    if dias_mora_efectiva <= 3:
-        return ("vigente_0_3", "Cartera Vigente (0 a 3 días)")
-    elif 4 <= dias_mora_efectiva <= 6:
-        return ("preventiva_4_6", "Alerta Preventiva (4 a 6 días)")
-    elif 7 <= dias_mora_efectiva <= 10:
-        return ("congelada_7_10", "Cartera Congelada (7 a 10 días)")
-    else:
-        return ("critica_mas_10", "Cartera Crítica (> 10 días)")
+from services.scoring_service import clasificar_banda_mora
 
 
 def obtener_arqueo_diario(
@@ -264,37 +241,19 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
         c_limite = float(cli["limite_credito"] or 0.0)
         c_saldo = float(cli["saldo_actual"] or 0.0)
 
-        # 1. Calcular días transcurridos desde el cargo pendiente más antiguo (idéntico a scoring_service)
-        cursor.execute(
-            """
-            SELECT fecha_movimiento,
-                   CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_transcurridos
-            FROM cuentas_por_cobrar
-            WHERE cliente_id = ? AND tipo_movimiento = 'cargo'
-            ORDER BY fecha_movimiento ASC
-            LIMIT 1
-            """,
-            (c_id,),
-        )
-        cxc_row = cursor.fetchone()
-        dias_transcurridos = (
-            cxc_row["dias_transcurridos"]
-            if (cxc_row and cxc_row["dias_transcurridos"] is not None)
-            else 0
-        )
-        if dias_transcurridos < 0:
-            dias_transcurridos = 0
+        # 1. Evaluar scoring integral con imputación FIFO y reglas de veto en vivo
+        ev = scoring_service.evaluar_cliente(c_id, conn)
+        dias_transcurridos = ev["dias_transcurridos"]
+        dias_mora_efectiva = ev["dias_mora_efectiva"]
+        score_cliente = ev["score"]
+        cat_riesgo = ev["clase_final"]
+        clase_puntaje = ev["clase_puntaje"]
+        veto_aplicado = ev["veto_aplicado"]
 
-        # 2. Descontar plazo pactado (PLAZO_ESTANDAR_DIAS = 8) para obtener mora efectiva
-        dias_mora_efectiva = max(0, dias_transcurridos - PLAZO_ESTANDAR_DIAS)
-
-        # 3. Evaluar scoring y matriz de decisión en vivo
-        score_cliente, cat_riesgo = scoring_service.calcular_score(c_id, conn)
-
-        # 4. Clasificar banda de mora según los umbrales de P-Q9 / V1.1
+        # 2. Clasificar banda de mora según los umbrales de P-Q9 / V1.1
         banda, etiqueta_banda = clasificar_banda_mora(dias_mora_efectiva)
 
-        # 5. Acumular en resúmenes
+        # 3. Acumular en resúmenes
         resumen_por_banda[banda] += c_saldo
         conteo_por_banda[banda] += 1
 
@@ -312,6 +271,8 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
             "dias_mora_efectiva": dias_mora_efectiva,
             "score": score_cliente,
             "clase_riesgo": cat_riesgo,
+            "clase_puntaje": clase_puntaje,
+            "veto_aplicado": veto_aplicado,
             "banda": banda,
             "estado_banda": etiqueta_banda,
         })
