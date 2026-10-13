@@ -607,3 +607,62 @@ def test_clasificar_banda_mora_desde_scoring():
     assert cbm_scoring(11) == ("critica_mas_10", "Cartera Crítica (> 10 días)")
 
 
+def test_schema_plazo_por_defecto_y_check(db_conn):
+    """Verifica que el schema aplique DEFAULT 8 y CHECK (plazo_pactado_dias IN (8, 15))."""
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente Default Plazo', 1000.0, 0.0, 60, 'B', 'solo_apodo')
+    """)
+    cid = cursor.lastrowid
+    db_conn.commit()
+
+    cursor.execute("SELECT plazo_pactado_dias FROM clientes WHERE id = ?", (cid,))
+    assert cursor.fetchone()["plazo_pactado_dias"] == 8
+
+    with pytest.raises(sqlite3.IntegrityError):
+        cursor.execute("""
+            INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo, plazo_pactado_dias)
+            VALUES ('Cliente Plazo Invalido', 1000.0, 0.0, 60, 'B', 'solo_apodo', 10)
+        """)
+
+
+def test_mora_efectiva_usa_plazo_del_cliente(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que calcular_mora_efectiva descuente el plazo específico del cliente (8 o 15 días).
+    Cargo pendiente de hace 16 días:
+    - Con plazo 8 -> mora 8 días, clase_final C, veto R1.
+    - Con plazo 15 -> mora 1 día, sw1 100, clase_final A, veto None.
+    """
+    cid_8 = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+    cid_15 = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+
+    db_conn.execute("UPDATE clientes SET plazo_pactado_dias = 15 WHERE id = ?", (cid_15,))
+    db_conn.commit()
+
+    # Cliente con plazo 8
+    res_8 = evaluar_cliente(cid_8, db_conn)
+    assert res_8["dias_mora_efectiva"] == 8
+    assert res_8["clase_final"] == "C"
+    assert res_8["veto_aplicado"] == "R1"
+
+    # Cliente con plazo 15
+    res_15 = evaluar_cliente(cid_15, db_conn)
+    assert res_15["dias_mora_efectiva"] == 1
+    assert res_15["sw1"] == 100.0
+    assert res_15["clase_final"] == "A"
+    assert res_15["veto_aplicado"] is None
+
+
+def test_cliente_quincenal_que_paga_el_dia_15_no_queda_en_mora(db_conn, crear_cliente_score_alto):
+    """Verifica que un cliente quincenal con cargo de 15 días tenga mora 0 (Matriz v2 §3.1)."""
+    cid = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=15)
+    db_conn.execute("UPDATE clientes SET plazo_pactado_dias = 15 WHERE id = ?", (cid,))
+    db_conn.commit()
+
+    assert calcular_mora_efectiva(cid, db_conn) == 0
+    res = evaluar_cliente(cid, db_conn)
+    assert res["dias_mora_efectiva"] == 0
+    assert res["veto_aplicado"] is None
+
+

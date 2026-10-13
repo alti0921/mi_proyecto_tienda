@@ -409,3 +409,21 @@ def test_cxc_persistencia_usuario_id_en_cargos_y_abonos(db_conn):
     row_abono = cur.fetchone()
     assert row_abono["usuario_id"] == 2
 
+
+def test_cliente_incluye_plazo_pactado(db_conn):
+    """
+    Verifica que el modelo y servicio de clientes incluyan el campo
+    plazo_pactado_dias con valor por defecto 8, y que se preserve al actualizar.
+    """
+    cli = crear_cliente(nombre="Cliente Plazo CXC", conn=db_conn)
+    assert cli.plazo_pactado_dias == 8
+
+    cli_bd = obtener_cliente(cli.id, db_conn)
+    assert cli_bd is not None
+    assert cli_bd.plazo_pactado_dias == 8
+
+    cli_act = actualizar_cliente(cli.id, db_conn, nombre="Cliente Plazo Renombrado")
+    assert cli_act.nombre == "Cliente Plazo Renombrado"
+    assert cli_act.plazo_pactado_dias == 8
+
+

@@ -2,8 +2,9 @@ import sqlite3
 from typing import Optional, Tuple, Dict, Any
 from models.scoring import ScoringHistorial
 
-# Constante global de negocio: Plazo estándar / Período de gracia en días
-PLAZO_ESTANDAR_DIAS: int = 8
+# Constantes de negocio: Plazo por defecto y plazos válidos permitidos (RF-CXC-07)
+PLAZO_POR_DEFECTO_DIAS: int = 8
+PLAZOS_PACTADOS_VALIDOS: Tuple[int, int] = (8, 15)
 
 def calcular_v1_1(dias_mora_efectiva: int) -> float:
     """
@@ -107,18 +108,33 @@ def _obtener_dias_transcurridos(cliente_id: int, conn: sqlite3.Connection) -> in
     return 0
 
 
+def obtener_plazo_pactado(cliente_id: int, conn: sqlite3.Connection) -> int:
+    """
+    Obtiene el plazo pactado de pago del cliente (8 o 15 días, RF-CXC-07).
+    Si el cliente no existe o no tiene plazo configurado, retorna PLAZO_POR_DEFECTO_DIAS (8).
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT plazo_pactado_dias FROM clientes WHERE id = ?", (cliente_id,))
+    row = cursor.fetchone()
+    if not row or row["plazo_pactado_dias"] is None:
+        return PLAZO_POR_DEFECTO_DIAS
+    return int(row["plazo_pactado_dias"])
+
+
 def calcular_mora_efectiva(cliente_id: int, conn: sqlite3.Connection) -> int:
     """
-    Calcula los días de mora efectiva descontando el plazo estándar de gracia (8 días)
+    Calcula los días de mora efectiva descontando el plazo pactado del cliente (8 o 15 días, RF-CXC-07)
     sobre los días transcurridos del cargo pendiente más antiguo (FIFO).
     """
-    return max(0, _obtener_dias_transcurridos(cliente_id, conn) - PLAZO_ESTANDAR_DIAS)
+    dias_transcurridos = _obtener_dias_transcurridos(cliente_id, conn)
+    plazo_pactado = obtener_plazo_pactado(cliente_id, conn)
+    return max(0, dias_transcurridos - plazo_pactado)
 
 
 def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW1: Comportamiento de Pago Histórico (Peso W1 = 40%).
-    SW1 = 0.60 * V1.1 (días de mora efectiva tras plazo de gracia de 8 días) + 0.40 * V1.2 (antigüedad de saldo).
+    SW1 = 0.60 * V1.1 (días de mora efectiva tras el plazo pactado del cliente) + 0.40 * V1.2 (antigüedad de saldo).
     Devuelve un valor flotante en la escala 0 - 100.
     """
     cursor = conn.cursor()

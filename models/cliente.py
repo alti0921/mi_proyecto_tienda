@@ -13,6 +13,7 @@ class Cliente:
     score_crediticio: int = 60
     categoria_riesgo: str = "B"
     activo: bool = True
+    plazo_pactado_dias: int = 8
 
     @property
     def cupo_disponible(self) -> float:

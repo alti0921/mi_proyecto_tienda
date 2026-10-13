@@ -558,3 +558,38 @@ def test_venta_credito_veto_r1_exige_abono_previo(db_conn, crear_cliente_score_a
             monto_pagado=0.0,
         )
 
+
+def test_asignar_limite_credito_con_plazo_pactado(db_conn):
+    """
+    Verifica la asignación de límite de crédito con plazo pactado (RF-CXC-07):
+    - Asignar (50000, plazo 15) al cliente 1 -> retorno y BD con limite 50000 y plazo 15.
+    - Asignar (60000) sin plazo -> limite 60000 y el plazo se conserva en 15.
+    - Asignar (70000, plazo 10) -> ValueError, y en la BD siguen limite 60000 y plazo 15.
+    """
+    cli = asignar_limite_credito(cliente_id=1, nuevo_limite=50000.0, conn=db_conn, plazo_pactado_dias=15)
+    assert cli.limite_credito == 50000.0
+    assert cli.plazo_pactado_dias == 15
+
+    cur = db_conn.cursor()
+    cur.execute("SELECT limite_credito, plazo_pactado_dias FROM clientes WHERE id = 1")
+    row = cur.fetchone()
+    assert row["limite_credito"] == 50000.0
+    assert row["plazo_pactado_dias"] == 15
+
+    cli2 = asignar_limite_credito(cliente_id=1, nuevo_limite=60000.0, conn=db_conn)
+    assert cli2.limite_credito == 60000.0
+    assert cli2.plazo_pactado_dias == 15
+
+    cur.execute("SELECT limite_credito, plazo_pactado_dias FROM clientes WHERE id = 1")
+    row2 = cur.fetchone()
+    assert row2["limite_credito"] == 60000.0
+    assert row2["plazo_pactado_dias"] == 15
+
+    with pytest.raises(ValueError, match="El plazo pactado debe ser de 8 días.*o 15 días"):
+        asignar_limite_credito(cliente_id=1, nuevo_limite=70000.0, conn=db_conn, plazo_pactado_dias=10)
+
+    cur.execute("SELECT limite_credito, plazo_pactado_dias FROM clientes WHERE id = 1")
+    row3 = cur.fetchone()
+    assert row3["limite_credito"] == 60000.0
+    assert row3["plazo_pactado_dias"] == 15
+

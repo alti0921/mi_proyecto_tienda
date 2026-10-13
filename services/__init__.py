@@ -12,6 +12,9 @@ from services.scoring_service import (
     decision_por_clase,
     evaluar_cliente,
     clasificar_banda_mora,
+    obtener_plazo_pactado,
+    PLAZO_POR_DEFECTO_DIAS,
+    PLAZOS_PACTADOS_VALIDOS,
 )
 from services.inventario_service import (
     crear_producto,
@@ -96,4 +99,7 @@ __all__ = [
     "obtener_arqueo_diario",
     "obtener_consolidado_cartera",
     "clasificar_banda_mora",
+    "obtener_plazo_pactado",
+    "PLAZO_POR_DEFECTO_DIAS",
+    "PLAZOS_PACTADOS_VALIDOS",
 ]

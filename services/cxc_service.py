@@ -19,6 +19,7 @@ def _row_to_cliente(row: sqlite3.Row) -> Cliente:
         categoria_riesgo=row["categoria_riesgo"],
         nivel_vinculo=row["nivel_vinculo"],
         activo=bool(row["activo"]),
+        plazo_pactado_dias=int(row["plazo_pactado_dias"]),
     )
 
 
@@ -47,7 +48,7 @@ def crear_cliente(
     limite_credito: float = 0.0,
 ) -> Cliente:
     """
-    Crea y persiste un nuevo cliente en la base de datos (RF-CXC-02).
+    Crea y persiste un nuevo cliente en la base de datos (RF-CXC-01).
     Valida campos obligatorios y reglas de integridad.
     """
     if not nombre or not nombre.strip():
@@ -88,6 +89,7 @@ def crear_cliente(
         categoria_riesgo="B",
         nivel_vinculo=nivel_vinculo,
         activo=True,
+        plazo_pactado_dias=8,
     )
 
 
@@ -165,7 +167,7 @@ def actualizar_cliente(
     Valida que nivel_vinculo pertenezca a NIVELES_VINCULO_VALIDOS si se proporciona.
     Valida activo in (0, 1) si se proporciona.
     Retorna el dataclass Cliente actualizado.
-    NOTA: limite_credito NO se actualiza aquí (se gestiona exclusivamente vía pos_service.asignar_limite_credito).
+    NOTA: limite_credito y plazo_pactado_dias NO se actualizan aquí (se gestionan exclusivamente vía pos_service.asignar_limite_credito).
     saldo_actual NO se actualiza aquí (inmutable, solo vía cargos y abonos).
     """
     cursor = conn.cursor()

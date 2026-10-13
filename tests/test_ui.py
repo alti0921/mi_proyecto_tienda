@@ -1096,5 +1096,64 @@ def test_ui_pos_cold_start_clase_c_sin_exigencia_abono(ui_app):
     assert "Requiere abono previo" not in texto_scoring
 
 
+def test_perfil_cliente_asigna_plazo_quincenal_admin_y_bloqueo_vendedor(ui_app):
+    """
+    Verifica la asignación de plazo pactado (8 vs 15 días) desde la UI por un admin,
+    la persistencia en BD y el bloqueo estricto del selector para el rol vendedor.
+    """
+    ui_app.geometry("1280x950")
+    ui_app.deiconify()
+    try:
+        login_frame: PantallaLogin = ui_app.pantallas["login"]
+        cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+
+        # 1. Como Administrador
+        ui_app.navegar_a("login")
+        login_frame.entry_usuario.delete(0, tk.END)
+        login_frame.entry_usuario.insert(0, "admin")
+        login_frame.entry_password.delete(0, tk.END)
+        login_frame.entry_password.insert(0, "admin123")
+        login_frame._procesar_login()
+
+        ui_app.navegar_a("cxc")
+        ui_app.update()
+        assert ui_app.sesion.es_admin is True
+        assert str(cxc_frame.combo_plazo["state"]) == "readonly"
+        assert not cxc_frame.lbl_solo_admin_cupo.winfo_ismapped()
+
+        cliente_id = cxc_frame._cliente_actual.id
+        cxc_frame.combo_plazo.set("15 días (quincenal)")
+        cxc_frame.entry_nuevo_cupo.delete(0, tk.END)
+        cxc_frame.entry_nuevo_cupo.insert(0, "40000")
+        cxc_frame._asignar_cupo()
+
+        assert cxc_frame.area_error_cupo.tiene_error() is False
+        assert "plazo pactado de 15 días" in cxc_frame.lbl_exito_cupo.cget("text")
+        cli_bd = cxc_service.obtener_cliente(cliente_id, ui_app.sesion.conn)
+        assert cli_bd.plazo_pactado_dias == 15
+        assert cli_bd.limite_credito == 40000.0
+
+        # 2. Como Vendedor
+        ui_app.cerrar_sesion()
+        login_frame.entry_usuario.delete(0, tk.END)
+        login_frame.entry_usuario.insert(0, "vendedor")
+        login_frame.entry_password.delete(0, tk.END)
+        login_frame.entry_password.insert(0, "vend123")
+        login_frame._procesar_login()
+
+        ui_app.navegar_a("cxc")
+        ui_app.update()
+        assert ui_app.sesion.es_admin is False
+        assert str(cxc_frame.combo_plazo["state"]) == "disabled"
+        assert cxc_frame.lbl_solo_admin_cupo.winfo_ismapped()
+    finally:
+        ui_app.geometry("1120x720")
+        ui_app.withdraw()
+
+
+
+
+
+
 
 

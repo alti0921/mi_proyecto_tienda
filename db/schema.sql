@@ -39,13 +39,14 @@ CREATE TABLE productos (
 );
 
 -- 3. Tabla: clientes
--- Requisitos: RF-CXC-02, RF-SCR-01 (Gestión de clientes, línea de crédito, nivel de vínculo y score 0-100 Clases A/B/C/D)
+-- Requisitos: RF-CXC-01, RF-CXC-05, RF-CXC-07, RF-SCR-01 (clientes, cupo, plazo pactado 8/15 días, nivel de vínculo y score 0-100 A/B/C/D)
 CREATE TABLE clientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
     telefono TEXT,
     direccion TEXT,
     limite_credito REAL NOT NULL DEFAULT 0.0 CHECK (limite_credito >= 0),
+    plazo_pactado_dias INTEGER NOT NULL DEFAULT 8 CHECK (plazo_pactado_dias IN (8, 15)),
     saldo_actual REAL NOT NULL DEFAULT 0.0 CHECK (saldo_actual >= 0),
     score_crediticio INTEGER NOT NULL DEFAULT 60 CHECK (score_crediticio BETWEEN 0 AND 100),
     categoria_riesgo TEXT NOT NULL DEFAULT 'B' CHECK (categoria_riesgo IN ('A', 'B', 'C', 'D')),
@@ -84,7 +85,7 @@ CREATE TABLE venta_detalle (
 );
 
 -- 6. Tabla: cuentas_por_cobrar
--- Requisito: RF-CXC-01 (Registro inmutable / Append-Only de cargos y abonos)
+-- Requisito: RF-CXC-02 (registro inmutable / Append-Only de cargos y abonos)
 CREATE TABLE cuentas_por_cobrar (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cliente_id INTEGER NOT NULL,

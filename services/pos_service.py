@@ -22,24 +22,41 @@ def asignar_limite_credito(
     cliente_id: int,
     nuevo_limite: float,
     conn: sqlite3.Connection,
+    plazo_pactado_dias: Optional[int] = None,
 ) -> Cliente:
     """
-    Asigna o actualiza el límite de crédito (cupo) de un cliente (RF-SCR-02 / RF-CXC-05).
-    Requiere confirmación operativa del tendero.
+    Asigna o actualiza el límite de crédito (cupo) y el plazo pactado de un cliente.
+    RF-CXC-07 (cupo y plazo pactado), RF-SCR-02. Restringida a rol admin en la UI.
     """
     if nuevo_limite < 0:
         raise ValueError(f"El límite de crédito no puede ser negativo ({nuevo_limite}).")
 
+    if (
+        plazo_pactado_dias is not None
+        and plazo_pactado_dias not in scoring_service.PLAZOS_PACTADOS_VALIDOS
+    ):
+        raise ValueError("El plazo pactado debe ser de 8 días (semanal) o 15 días (quincenal).")
+
     cursor = conn.cursor()
-    cursor.execute("SELECT id, activo FROM clientes WHERE id = ?", (cliente_id,))
+    cursor.execute("SELECT id, activo, plazo_pactado_dias FROM clientes WHERE id = ?", (cliente_id,))
     row = cursor.fetchone()
     if not row or not row["activo"]:
         raise ValueError(f"Cliente ID {cliente_id} no encontrado o inactivo.")
 
+    plazo_final = (
+        int(plazo_pactado_dias)
+        if plazo_pactado_dias is not None
+        else int(row["plazo_pactado_dias"])
+    )
+
     try:
         cursor.execute(
-            "UPDATE clientes SET limite_credito = ? WHERE id = ?",
-            (round(float(nuevo_limite), 2), cliente_id),
+            """
+            UPDATE clientes
+            SET limite_credito = ?, plazo_pactado_dias = ?
+            WHERE id = ?
+            """,
+            (round(float(nuevo_limite), 2), plazo_final, cliente_id),
         )
         conn.commit()
     except Exception as e:

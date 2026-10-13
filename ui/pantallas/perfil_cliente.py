@@ -317,7 +317,7 @@ class PantallaPerfilCliente(tk.Frame):
 
         lbl_tit_cupo = tk.Label(
             card_cupo,
-            text="🔒 Gestión de Límite de Crédito (Cupo)",
+            text="🔒 Gestión de Cupo y Plazo Pactado",
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
@@ -383,12 +383,28 @@ class PantallaPerfilCliente(tk.Frame):
         self.entry_nuevo_cupo = ttk.Entry(frame_input_cupo, width=14, font=("Segoe UI", 10))
         self.entry_nuevo_cupo.pack(side=tk.LEFT, padx=(0, 8))
 
+        tk.Label(
+            frame_input_cupo,
+            text="Plazo:",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_BLANCO,
+        ).pack(side=tk.LEFT, padx=(4, 6))
+
+        self.combo_plazo = ttk.Combobox(
+            frame_input_cupo,
+            state="readonly",
+            values=["8 días (semanal)", "15 días (quincenal)"],
+            width=18,
+        )
+        self.combo_plazo.set("8 días (semanal)")
+        self.combo_plazo.pack(side=tk.LEFT, padx=(0, 8))
+
         # Reutilización obligatoria de BotonRestringidoPorRol
         self.btn_asignar_cupo = BotonRestringidoPorRol(
             frame_input_cupo,
             sesion=self.sesion,
             roles_permitidos=["admin"],
-            text="🔒 Confirmar Cupo (Admin)",
+            text="🔒 Confirmar Cupo y Plazo (Admin)",
             style="Primary.TButton",
             command=self._asignar_cupo,
         )
@@ -404,6 +420,15 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_BASE_BOLD,
         )
         self.lbl_exito_cupo.pack(anchor="w", pady=(2, 0))
+
+        self.lbl_solo_admin_cupo = tk.Label(
+            card_cupo,
+            text="Solo administradores pueden modificar el cupo y el plazo.",
+            font=FUENTE_PEQUENA,
+            background=COLOR_BLANCO,
+            foreground=COLOR_TEXTO_MUTED,
+        )
+        self.lbl_solo_admin_cupo.pack(anchor="w", pady=(2, 0))
 
     # =========================================================================
     # COLUMNA DERECHA: REGISTRO DE ABONO E HISTORIAL APPEND-ONLY (RF-CXC-04, 06)
@@ -619,6 +644,11 @@ class PantallaPerfilCliente(tk.Frame):
             self.entry_nuevo_cupo.delete(0, tk.END)
             self.entry_nuevo_cupo.insert(0, f"{cliente.limite_credito:.2f}")
 
+        if cliente.plazo_pactado_dias == 15:
+            self.combo_plazo.set("15 días (quincenal)")
+        else:
+            self.combo_plazo.set("8 días (semanal)")
+
     def _actualizar_scoring_visual(self, cliente_id: int) -> None:
         """Calcula de forma fresca e instantánea el score y actualiza los badges."""
         ev = scoring_service.evaluar_cliente(cliente_id, self.sesion.conn)
@@ -739,11 +769,15 @@ class PantallaPerfilCliente(tk.Frame):
             self.area_error_cupo.mostrar_error("El cupo a asignar debe ser un valor numérico válido.")
             return
 
+        plazo_txt = self.combo_plazo.get()
+        plazo_dias = 15 if "15" in plazo_txt else 8
+
         try:
             cli = pos_service.asignar_limite_credito(
                 cliente_id=self._cliente_actual.id,
                 nuevo_limite=nuevo_limite,
                 conn=self.sesion.conn,
+                plazo_pactado_dias=plazo_dias,
             )
             self._cliente_actual = cli
             self.lbl_limite_actual.config(text=f"Límite: ${cli.limite_credito:,.2f}")
@@ -752,7 +786,7 @@ class PantallaPerfilCliente(tk.Frame):
                 text=f"Disponible: ${cli.cupo_disponible:,.2f}", foreground=cupo_color
             )
             self.lbl_exito_cupo.config(
-                text=f"✅ Cupo de crédito actualizado a ${cli.limite_credito:,.2f} COP."
+                text=f"✅ Cupo de crédito actualizado a ${cli.limite_credito:,.2f} COP y plazo pactado de {cli.plazo_pactado_dias} días."
             )
 
         except ValueError as e:
@@ -1031,6 +1065,12 @@ class PantallaPerfilCliente(tk.Frame):
         """Hook invocado por App.navegar_a al levantar esta pantalla."""
         self._limpiar_mensajes()
         self.btn_asignar_cupo.actualizar_estado()
+        if self.sesion.es_admin:
+            self.combo_plazo.config(state="readonly")
+            self.lbl_solo_admin_cupo.pack_forget()
+        else:
+            self.combo_plazo.config(state="disabled")
+            self.lbl_solo_admin_cupo.pack(anchor="w", pady=(2, 0))
         self._cargar_selector_clientes(
             mantener_id=self._cliente_actual.id if self._cliente_actual else None
         )

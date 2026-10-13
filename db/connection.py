@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from db.migraciones import aplicar_migraciones
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "tienda.db")
 
@@ -11,4 +12,5 @@ def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
+    aplicar_migraciones(conn, db_path)
     return conn
