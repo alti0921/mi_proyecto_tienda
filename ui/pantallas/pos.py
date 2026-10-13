@@ -36,7 +36,7 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError
+from ui.widgets_comunes import AreaError, DialogoNuevoCliente
 
 
 class PantallaPOS(tk.Frame):
@@ -318,9 +318,20 @@ class PantallaPOS(tk.Frame):
         )
         lbl_sec_cli.pack(anchor="w", pady=(0, 4))
 
-        self.combo_clientes = ttk.Combobox(panel_der, state="readonly", width=34)
-        self.combo_clientes.pack(fill=tk.X, pady=(0, 8))
+        frame_selector_cli = tk.Frame(panel_der, background=COLOR_BLANCO)
+        frame_selector_cli.pack(fill=tk.X, pady=(0, 8))
+
+        self.combo_clientes = ttk.Combobox(frame_selector_cli, state="readonly")
+        self.combo_clientes.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         self.combo_clientes.bind("<<ComboboxSelected>>", self._on_cliente_seleccionado)
+
+        self.btn_nuevo_cliente = ttk.Button(
+            frame_selector_cli,
+            text="+ Nuevo",
+            command=self._abrir_dialogo_nuevo_cliente,
+        )
+        self.btn_nuevo_cliente.pack(side=tk.RIGHT)
+
 
         # Tarjeta visual de estado crediticio
         self.frame_card_credito = tk.Frame(
@@ -906,7 +917,22 @@ class PantallaPOS(tk.Frame):
         self.entry_busqueda_prod.delete(0, tk.END)
         self._refrescar_catalogo()
 
+    def _abrir_dialogo_nuevo_cliente(self) -> None:
+        """Abre el diálogo modal común para dar de alta a un nuevo cliente desde el POS."""
+        def _al_crear(cliente: Cliente) -> None:
+            self._cargar_clientes()
+            etiqueta = f"{cliente.nombre} (ID: {cliente.id})"
+            self.combo_clientes.set(etiqueta)
+            self._on_cliente_seleccionado()
+
+        self._dialogo_nuevo_cliente = DialogoNuevoCliente(
+            parent=self,
+            conn=self.sesion.conn,
+            al_crear=_al_crear,
+        )
+
     def _cargar_clientes(self) -> None:
+
         """Carga la lista de clientes activos en el Combobox."""
         clientes = cxc_service.listar_clientes(self.sesion.conn, solo_activos=True)
         self._clientes_map.clear()

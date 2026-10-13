@@ -36,7 +36,7 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError, BotonRestringidoPorRol
+from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, DialogoNuevoCliente
 
 
 class PantallaPerfilCliente(tk.Frame):
@@ -962,71 +962,16 @@ class PantallaPerfilCliente(tk.Frame):
 
     def _abrir_modal_nuevo_cliente(self) -> None:
         """Abre ventana modal para dar de alta a un nuevo cliente en el sistema."""
-        dialog = tk.Toplevel(self)
-        dialog.title("Registrar Nuevo Cliente")
-        dialog.geometry("420x360")
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.configure(background=COLOR_FONDO_APP)
+        def _al_crear(nuevo: Cliente) -> None:
+            self._cargar_selector_clientes(mantener_id=nuevo.id)
+            self._cargar_ficha_cliente(nuevo.id)
 
-        frame = tk.Frame(dialog, background=COLOR_FONDO_APP, padx=15, pady=15)
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(
-            frame,
-            text="➕ Alta de Cliente",
-            font=FUENTE_SUBTITULO,
-            background=COLOR_FONDO_APP,
-            foreground=COLOR_TEXTO_PRINCIPAL,
-        ).pack(anchor="w", pady=(0, 10))
-
-        # Campos
-        tk.Label(frame, text="Nombre completo (*):", font=FUENTE_BASE_BOLD, background=COLOR_FONDO_APP).pack(anchor="w")
-        entry_nom = ttk.Entry(frame, width=35)
-        entry_nom.pack(fill=tk.X, pady=(2, 6))
-
-        tk.Label(frame, text="Teléfono:", font=FUENTE_BASE_BOLD, background=COLOR_FONDO_APP).pack(anchor="w")
-        entry_tel = ttk.Entry(frame, width=35)
-        entry_tel.pack(fill=tk.X, pady=(2, 6))
-
-        tk.Label(frame, text="Dirección:", font=FUENTE_BASE_BOLD, background=COLOR_FONDO_APP).pack(anchor="w")
-        entry_dir = ttk.Entry(frame, width=35)
-        entry_dir.pack(fill=tk.X, pady=(2, 6))
-
-        tk.Label(frame, text="Nivel de vínculo:", font=FUENTE_BASE_BOLD, background=COLOR_FONDO_APP).pack(anchor="w")
-        combo_v = ttk.Combobox(
-            frame,
-            values=["solo_apodo", "conocido_referido", "registro_completo"],
-            state="readonly",
+        self._dialogo_nuevo_cliente = DialogoNuevoCliente(
+            parent=self,
+            conn=self.sesion.conn,
+            al_crear=_al_crear,
         )
-        combo_v.set("solo_apodo")
-        combo_v.pack(fill=tk.X, pady=(2, 10))
 
-        area_err_modal = AreaError(frame)
-
-        def _guardar_nuevo():
-            nom = entry_nom.get().strip()
-            tel = entry_tel.get().strip() or None
-            dire = entry_dir.get().strip() or None
-            vinc = combo_v.get()
-
-            try:
-                nuevo = cxc_service.crear_cliente(
-                    nombre=nom,
-                    conn=self.sesion.conn,
-                    telefono=tel,
-                    direccion=dire,
-                    nivel_vinculo=vinc,
-                    limite_credito=0.0,
-                )
-                dialog.destroy()
-                self._cargar_selector_clientes(mantener_id=nuevo.id)
-                self._cargar_ficha_cliente(nuevo.id)
-            except ValueError as e:
-                area_err_modal.mostrar_error(str(e))
-
-        btn_crear = ttk.Button(frame, text="Crear Cliente", style="Primary.TButton", command=_guardar_nuevo)
-        btn_crear.pack(fill=tk.X, pady=(10, 0))
 
     # =========================================================================
     # RECARGA Y NAVEGACIÓN (al_mostrar)

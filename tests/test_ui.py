@@ -5,7 +5,7 @@ import tkinter as tk
 
 from models.usuario import Usuario
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, BarraSuperior
+from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, BarraSuperior, DialogoNuevoCliente
 from ui.app import App
 from ui.pantallas.login import PantallaLogin
 from ui.pantallas.pos import PantallaPOS
@@ -1172,6 +1172,106 @@ def test_perfil_cliente_cold_start_muestra_plazo_del_cliente(ui_app):
     assert "$30,000" in sug_txt
     assert "plazo pactado de 8 días" in sug_txt
     assert cxc_frame.combo_plazo.get() == "8 días (semanal)"
+
+
+def test_pos_alta_cliente_desde_pos_queda_seleccionado(ui_app):
+    """
+    Verifica que al dar de alta un cliente desde el diálogo del POS (+ Nuevo),
+    el cliente se cree en BD con cupo 0.0 y plazo 8, y quede inmediatamente seleccionado
+    en el Combobox del POS con su tarjeta crediticia en estado Cold-start (RF-CXC-01, Wireframes v2).
+    """
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    pos._abrir_dialogo_nuevo_cliente()
+    dlg = pos._dialogo_nuevo_cliente
+
+    dlg.entry_nombre.delete(0, tk.END)
+    dlg.entry_nombre.insert(0, "Don Pepe Tienda Test")
+    dlg.combo_vinculo.set("conocido_referido")
+    dlg.guardar()
+
+    clientes = cxc_service.buscar_clientes("Don Pepe Tienda Test", ui_app.sesion.conn)
+    assert len(clientes) >= 1
+    cli = clientes[0]
+    assert cli.limite_credito == 0.0
+    assert cli.plazo_pactado_dias == 8
+
+    assert pos._cliente_actual is not None
+    assert pos._cliente_actual.nombre == "Don Pepe Tienda Test"
+    assert pos.combo_clientes.get() == f"Don Pepe Tienda Test (ID: {cli.id})"
+    assert "Cold-start" in pos.lbl_card_scoring.cget("text")
+    assert dlg.winfo_exists() == 0
+
+
+def test_pos_alta_cliente_nombre_vacio_muestra_error(ui_app):
+    """
+    Verifica que el diálogo común de nuevo cliente valide nombre obligatorio:
+    muestra error en AreaError, no cierra la ventana y no crea registros en BD.
+    """
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    pos._abrir_dialogo_nuevo_cliente()
+    dlg = pos._dialogo_nuevo_cliente
+
+    total_antes = len(cxc_service.listar_clientes(ui_app.sesion.conn))
+
+    dlg.entry_nombre.delete(0, tk.END)
+    dlg.guardar()
+
+    assert dlg.area_error.tiene_error() is True
+    assert dlg.winfo_exists() == 1
+    total_despues = len(cxc_service.listar_clientes(ui_app.sesion.conn))
+    assert total_despues == total_antes
+
+    dlg.destroy()
+
+
+def test_pos_alta_cliente_permitida_a_vendedor(ui_app):
+    """
+    Verifica que el alta de clientes desde el POS esté disponible tanto para
+    administradores como para el rol vendedor (matriz de permisos ERS).
+    """
+    login_frame: PantallaLogin = ui_app.pantallas["login"]
+    ui_app.cerrar_sesion()
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, "vendedor")
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, "vend123")
+    login_frame._procesar_login()
+
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    pos._abrir_dialogo_nuevo_cliente()
+    dlg = pos._dialogo_nuevo_cliente
+
+    dlg.entry_nombre.delete(0, tk.END)
+    dlg.entry_nombre.insert(0, "Cliente Creado Por Vendedor")
+    dlg.guardar()
+
+    encontrados = cxc_service.buscar_clientes("Cliente Creado Por Vendedor", ui_app.sesion.conn)
+    assert len(encontrados) >= 1
+    assert encontrados[0].nombre == "Cliente Creado Por Vendedor"
+
+
+def test_perfil_alta_cliente_usa_dialogo_comun(ui_app):
+    """
+    Verifica que la pantalla de Perfil de Cliente utilice la clase compartida DialogoNuevoCliente
+    y cargue inmediatamente la ficha del cliente recién creado al guardar.
+    """
+    ui_app.navegar_a("cxc")
+    cxc: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc._abrir_modal_nuevo_cliente()
+
+    assert isinstance(cxc._dialogo_nuevo_cliente, DialogoNuevoCliente)
+    dlg = cxc._dialogo_nuevo_cliente
+
+    dlg.entry_nombre.delete(0, tk.END)
+    dlg.entry_nombre.insert(0, "Cliente Perfil Dialogo")
+    dlg.guardar()
+
+    assert cxc._cliente_actual is not None
+    assert cxc._cliente_actual.nombre == "Cliente Perfil Dialogo"
+
 
 
 

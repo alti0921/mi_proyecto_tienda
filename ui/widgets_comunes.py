@@ -1,21 +1,28 @@
+import sqlite3
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, List, Optional
 
+from models.cliente import Cliente
+from services import cxc_service
 from ui.estilos import (
     COLOR_BARRA_SUPERIOR,
     COLOR_BARRA_BORDE,
     COLOR_ERROR_BG,
     COLOR_ERROR_BORDE,
     COLOR_ERROR_TEXTO,
+    COLOR_FONDO_APP,
+    COLOR_TEXTO_PRINCIPAL,
     FUENTE_BASE,
     FUENTE_BASE_BOLD,
     FUENTE_TITULO,
+    FUENTE_SUBTITULO,
     FUENTE_BOTON,
     PAD_CAMPOS,
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
+
 
 
 class AreaError(tk.Frame):
@@ -218,3 +225,133 @@ class BarraSuperior(tk.Frame):
 
         # Refrescar botones restringidos
         self.btn_rep.actualizar_estado()
+
+
+class DialogoNuevoCliente(tk.Toplevel):
+    """
+    Diálogo modal reutilizable para registrar un nuevo cliente (RF-CXC-01, Wireframes v2).
+    Disponible tanto desde la pantalla de Clientes/CxC como directamente desde el POS.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        conn: sqlite3.Connection,
+        al_crear: Callable[[Cliente], None],
+        *args,
+        **kwargs,
+    ):
+        super().__init__(parent, *args, **kwargs)
+        self.conn = conn
+        self.al_crear = al_crear
+
+        self.title("Registrar Nuevo Cliente")
+        self.geometry("420x360")
+        try:
+            self.transient(parent)
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+        self.configure(background=COLOR_FONDO_APP)
+
+        frame = tk.Frame(self, background=COLOR_FONDO_APP, padx=15, pady=15)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            frame,
+            text="➕ Alta de Cliente",
+            font=FUENTE_SUBTITULO,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Campos
+        tk.Label(
+            frame,
+            text="Nombre o apodo (*):",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(anchor="w")
+        self.entry_nombre = ttk.Entry(frame, width=35)
+        self.entry_nombre.pack(fill=tk.X, pady=(2, 6))
+
+        tk.Label(
+            frame,
+            text="Teléfono:",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(anchor="w")
+        self.entry_telefono = ttk.Entry(frame, width=35)
+        self.entry_telefono.pack(fill=tk.X, pady=(2, 6))
+
+        tk.Label(
+            frame,
+            text="Dirección:",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(anchor="w")
+        self.entry_direccion = ttk.Entry(frame, width=35)
+        self.entry_direccion.pack(fill=tk.X, pady=(2, 6))
+
+        tk.Label(
+            frame,
+            text="Nivel de vínculo:",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(anchor="w")
+        self.combo_vinculo = ttk.Combobox(
+            frame,
+            values=["solo_apodo", "conocido_referido", "registro_completo"],
+            state="readonly",
+        )
+        self.combo_vinculo.set("solo_apodo")
+        self.combo_vinculo.pack(fill=tk.X, pady=(2, 10))
+
+        self.area_error = AreaError(frame)
+
+        self.btn_crear = ttk.Button(
+            frame,
+            text="Crear Cliente",
+            style="Primary.TButton",
+            command=self.guardar,
+        )
+        self.btn_crear.pack(fill=tk.X, pady=(10, 0))
+
+        # Keybindings: Enter en entry_nombre guarda; Escape cierra diálogo
+        self.entry_nombre.bind("<Return>", lambda e: self.guardar())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+        self.entry_nombre.focus_set()
+
+    def guardar(self) -> None:
+        """
+        Valida y persiste el nuevo cliente con cupo 0.0 (RF-CXC-07).
+        Si tiene éxito, destruye la ventana e invoca al_crear(cliente_nuevo).
+        Si hay ValueError, lo despliega en self.area_error manteniendo la ventana abierta.
+        """
+        self.area_error.limpiar()
+        nom = self.entry_nombre.get().strip()
+        tel = self.entry_telefono.get().strip() or None
+        dire = self.entry_direccion.get().strip() or None
+        vinc = self.combo_vinculo.get()
+
+        try:
+            nuevo = cxc_service.crear_cliente(
+                nombre=nom,
+                conn=self.conn,
+                telefono=tel,
+                direccion=dire,
+                nivel_vinculo=vinc,
+                limite_credito=0.0,
+            )
+            self.destroy()
+            if self.al_crear:
+                self.al_crear(nuevo)
+        except ValueError as e:
+            self.area_error.mostrar_error(str(e))
+
