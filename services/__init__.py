@@ -7,6 +7,10 @@ from services.scoring_service import (
     aplicar_matriz_decision,
     evaluar_cold_start,
     registrar_snapshot,
+    calcular_mora_efectiva,
+    aplicar_reglas_veto,
+    decision_por_clase,
+    evaluar_cliente,
 )
 from services.inventario_service import (
     crear_producto,
@@ -58,6 +62,10 @@ __all__ = [
     "aplicar_matriz_decision",
     "evaluar_cold_start",
     "registrar_snapshot",
+    "calcular_mora_efectiva",
+    "aplicar_reglas_veto",
+    "decision_por_clase",
+    "evaluar_cliente",
     "crear_producto",
     "obtener_producto",
     "obtener_producto_por_codigo",

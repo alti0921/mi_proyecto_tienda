@@ -23,6 +23,80 @@ def calcular_v1_1(dias_mora_efectiva: int) -> float:
         return 0.0
 
 
+def _obtener_dias_transcurridos(cliente_id: int, conn: sqlite3.Connection) -> int:
+    """
+    Calcula los días transcurridos desde el CARGO PENDIENTE MÁS ANTIGUO del cliente,
+    aplicando imputación FIFO (First In, First Out) de los abonos registrados.
+
+    Regla FIFO:
+    En una microtienda de barrio, los abonos parciales o totales cubren cronológicamente
+    las compras a crédito más antiguas. Un cargo antiguo que ya ha sido completamente
+    saldado por abonos históricos no debe seguir contando como mora activa ni inflar
+    la antigüedad del saldo.
+
+    Algoritmo:
+    1. Si el cliente no existe o saldo_actual <= 0: retorna 0.
+    2. Suma el total de todos los abonos del cliente.
+    3. Acumula en orden cronológico los montos de los cargos. El primer cargo cuya
+       suma acumulada supere total_abonos + 0.01 COP es el cargo pendiente más antiguo.
+    4. Retorna la diferencia en días (truncada a entero, mínimo 0) de ese cargo.
+    5. Si saldo_actual > 0 pero no se identifica ningún cargo pendiente (datos inconsistentes),
+       utiliza el cargo más reciente; si no existen cargos, retorna 0.
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cliente_id,))
+    row = cursor.fetchone()
+    if not row:
+        return 0
+
+    saldo_actual = float(row["saldo_actual"] or 0.0)
+    if saldo_actual <= 0:
+        return 0
+
+    cursor.execute("""
+        SELECT tipo_movimiento, monto,
+               (julianday('now') - julianday(fecha_movimiento)) AS dif
+        FROM cuentas_por_cobrar
+        WHERE cliente_id = ?
+        ORDER BY fecha_movimiento ASC, id ASC
+    """, (cliente_id,))
+    movimientos = cursor.fetchall()
+
+    total_abonos = sum(
+        float(m["monto"] or 0.0) for m in movimientos if m["tipo_movimiento"] == "abono"
+    )
+
+    cargos = [m for m in movimientos if m["tipo_movimiento"] == "cargo"]
+    acumulado_cargos = 0.0
+    cargo_pendiente = None
+
+    for c in cargos:
+        acumulado_cargos += float(c["monto"] or 0.0)
+        if acumulado_cargos > total_abonos + 0.01:
+            cargo_pendiente = c
+            break
+
+    if cargo_pendiente is not None:
+        dif = cargo_pendiente["dif"]
+        dias = int(dif) if dif is not None else 0
+        return max(0, dias)
+
+    if saldo_actual > 0 and cargos:
+        dif = cargos[-1]["dif"]
+        dias = int(dif) if dif is not None else 0
+        return max(0, dias)
+
+    return 0
+
+
+def calcular_mora_efectiva(cliente_id: int, conn: sqlite3.Connection) -> int:
+    """
+    Calcula los días de mora efectiva descontando el plazo estándar de gracia (8 días)
+    sobre los días transcurridos del cargo pendiente más antiguo (FIFO).
+    """
+    return max(0, _obtener_dias_transcurridos(cliente_id, conn) - PLAZO_ESTANDAR_DIAS)
+
+
 def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW1: Comportamiento de Pago Histórico (Peso W1 = 40%).
@@ -34,31 +108,16 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
     row = cursor.fetchone()
     if not row:
         return 0.0
-    
+
     saldo_actual = float(row["saldo_actual"] or 0.0)
-    
+
     if saldo_actual <= 0:
         # Sin saldo pendiente / Al día
         v1_1 = 100.0
         v1_2 = 100.0
     else:
-        # Obtener los días transcurridos desde el cargo pendiente más antiguo sin abonar totalmente
-        cursor.execute("""
-            SELECT fecha_movimiento,
-                   CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_transcurridos
-            FROM cuentas_por_cobrar
-            WHERE cliente_id = ? AND tipo_movimiento = 'cargo'
-            ORDER BY fecha_movimiento ASC
-            LIMIT 1
-        """, (cliente_id,))
-        cxc_row = cursor.fetchone()
-        
-        dias_transcurridos = cxc_row["dias_transcurridos"] if (cxc_row and cxc_row["dias_transcurridos"] is not None) else 0
-        if dias_transcurridos < 0:
-            dias_transcurridos = 0
-
-        # Cálculo de mora efectiva descontando el plazo de gracia (8 días)
-        dias_mora_efectiva = max(0, dias_transcurridos - PLAZO_ESTANDAR_DIAS)
+        dias_transcurridos = _obtener_dias_transcurridos(cliente_id, conn)
+        dias_mora_efectiva = calcular_mora_efectiva(cliente_id, conn)
 
         # Evaluación V1.1: 4 Niveles de Mora Efectiva según P-Q9
         v1_1 = calcular_v1_1(dias_mora_efectiva)
@@ -159,17 +218,43 @@ def calcular_sw3(cliente_id: int, conn: sqlite3.Connection) -> float:
         return 20.0
 
 
-def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
+def aplicar_reglas_veto(clase_puntaje: str, dias_mora_efectiva: int) -> Tuple[str, Optional[str]]:
     """
-    Traduce la puntuación S (0 - 100 pts) a las Salidas y Decisiones de la Matriz Calibrada:
-      - 80.0 a 100.0 -> Clase A (Riesgo Bajo / Incremento cupo +20%)
-      - 60.0 a 79.9  -> Clase B (Riesgo Medio / Mantener cupo)
-      - 40.0 a 59.9  -> Clase C (Riesgo Alto / Congelamiento, abono previo 50%)
-      - 0.0 a 39.9   -> Clase D (Riesgo Crítico / Bloqueo automático)
+    Aplica las reglas de veto R1 y R2 sobre la clase obtenida por puntaje:
+      - R2: dias_mora_efectiva > 10 -> Clase final 'D'.
+      - R1: 7 <= dias_mora_efectiva <= 10 -> La más restrictiva entre clase_puntaje y 'C'.
+    Orden de severidad: A < B < C < D.
+    Retorna la tupla (clase_final, veto_aplicado).
+    veto_aplicado es 'R1', 'R2' o None si la clase no fue modificada por una regla de veto.
+    Lanza ValueError si clase_puntaje no está en ('A', 'B', 'C', 'D') o dias_mora_efectiva < 0.
     """
-    score_redondeado = round(score, 2)
-    
-    if score_redondeado >= 80.0:
+    if clase_puntaje not in ("A", "B", "C", "D"):
+        raise ValueError(
+            f"Clase de puntaje no válida: '{clase_puntaje}'. Debe ser una de ('A', 'B', 'C', 'D')."
+        )
+    if dias_mora_efectiva < 0:
+        raise ValueError(
+            f"Los días de mora efectiva no pueden ser negativos (recibido: {dias_mora_efectiva})."
+        )
+
+    if dias_mora_efectiva > 10:
+        if clase_puntaje != "D":
+            return ("D", "R2")
+        return ("D", None)
+    elif 7 <= dias_mora_efectiva <= 10:
+        if clase_puntaje in ("A", "B"):
+            return ("C", "R1")
+        return (clase_puntaje, None)
+    else:
+        return (clase_puntaje, None)
+
+
+def decision_por_clase(clase: str) -> Dict[str, Any]:
+    """
+    Retorna la parametrización de riesgo y decisión comercial para una clase dada ('A', 'B', 'C', 'D').
+    Lanza ValueError si la clase no es válida.
+    """
+    if clase == "A":
         return {
             "categoria_riesgo": "A",
             "nivel_riesgo": "Riesgo Bajo (Clase A)",
@@ -179,9 +264,9 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
             "factor_cupo": 1.20,
             "congelado": False,
             "bloqueado": False,
-            "abono_minimo_pct": 0.0
+            "abono_minimo_pct": 0.0,
         }
-    elif 60.0 <= score_redondeado < 80.0:
+    elif clase == "B":
         return {
             "categoria_riesgo": "B",
             "nivel_riesgo": "Riesgo Medio (Clase B)",
@@ -191,9 +276,9 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
             "factor_cupo": 1.00,
             "congelado": False,
             "bloqueado": False,
-            "abono_minimo_pct": 0.0
+            "abono_minimo_pct": 0.0,
         }
-    elif 40.0 <= score_redondeado < 60.0:
+    elif clase == "C":
         return {
             "categoria_riesgo": "C",
             "nivel_riesgo": "Riesgo Alto (Clase C)",
@@ -203,9 +288,9 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
             "factor_cupo": 1.00,
             "congelado": True,
             "bloqueado": False,
-            "abono_minimo_pct": 0.50
+            "abono_minimo_pct": 0.50,
         }
-    else:
+    elif clase == "D":
         return {
             "categoria_riesgo": "D",
             "nivel_riesgo": "Riesgo Crítico (Clase D)",
@@ -215,8 +300,30 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
             "factor_cupo": 0.00,
             "congelado": True,
             "bloqueado": True,
-            "abono_minimo_pct": 1.00
+            "abono_minimo_pct": 1.00,
         }
+    else:
+        raise ValueError(f"Clase de riesgo no válida: '{clase}'. Debe ser una de ('A', 'B', 'C', 'D').")
+
+
+def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
+    """
+    Traduce la puntuación S (0 - 100 pts) a las Salidas y Decisiones de la Matriz Calibrada:
+      - 80.0 a 100.0 -> Clase A (Riesgo Bajo / Incremento cupo +20%)
+      - 60.0 a 79.9  -> Clase B (Riesgo Medio / Mantener cupo)
+      - 40.0 a 59.9  -> Clase C (Riesgo Alto / Congelamiento, abono previo 50%)
+      - 0.0 a 39.9   -> Clase D (Riesgo Crítico / Bloqueo automático)
+    """
+    score_redondeado = round(score, 2)
+    if score_redondeado >= 80.0:
+        clase = "A"
+    elif 60.0 <= score_redondeado < 80.0:
+        clase = "B"
+    elif 40.0 <= score_redondeado < 60.0:
+        clase = "C"
+    else:
+        clase = "D"
+    return decision_por_clase(clase)
 
 
 def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -226,25 +333,11 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
     IMPORTANTE: Si el cliente presenta saldo activo con más de 8 días de mora,
     se desactiva el Cold-Start para ser evaluado inmediatamente por el cálculo general de mora.
     """
-    cursor = conn.cursor()
-
     # 1. Desactivación de Cold-Start si existe mora activa mayor al plazo estándar (8 días)
-    cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cliente_id,))
-    cli_row = cursor.fetchone()
-    saldo_actual = float(cli_row["saldo_actual"] or 0.0) if cli_row else 0.0
+    if calcular_mora_efectiva(cliente_id, conn) > 0:
+        return {"es_cold_start": False}
 
-    if saldo_actual > 0:
-        cursor.execute("""
-            SELECT CAST(julianday('now') - julianday(fecha_movimiento) AS INTEGER) AS dias_transcurridos
-            FROM cuentas_por_cobrar
-            WHERE cliente_id = ? AND tipo_movimiento = 'cargo'
-            ORDER BY fecha_movimiento ASC
-            LIMIT 1
-        """, (cliente_id,))
-        cxc_row = cursor.fetchone()
-        dias_transcurridos = cxc_row["dias_transcurridos"] if (cxc_row and cxc_row["dias_transcurridos"] is not None) else 0
-        if dias_transcurridos > PLAZO_ESTANDAR_DIAS:
-            return {"es_cold_start": False}
+    cursor = conn.cursor()
 
     # 2. Contar ciclos de abono registrados
     cursor.execute("""
@@ -297,27 +390,70 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
     }
 
 
+def evaluar_cliente(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:
+    """
+    ÚNICA fuente de la clase final y evaluación crediticia integral del cliente.
+    Aplica ponderación de subvariables o protocolo Cold-Start, seguido de las
+    reglas de veto R1 y R2 por mora efectiva.
+    """
+    dias_mora_efectiva = calcular_mora_efectiva(cliente_id, conn)
+    cs = evaluar_cold_start(cliente_id, conn)
+
+    if cs.get("es_cold_start"):
+        score = float(cs["score_semilla"])
+        clase_cs = cs["decision"]["categoria_riesgo"]
+        return {
+            "es_cold_start": True,
+            "score": score,
+            "sw1": None,
+            "sw2": None,
+            "sw3": None,
+            "dias_mora_efectiva": dias_mora_efectiva,
+            "clase_puntaje": clase_cs,
+            "clase_final": clase_cs,
+            "veto_aplicado": None,
+            "decision": cs["decision"],
+            "cold_start": cs,
+        }
+
+    sw1 = calcular_sw1(cliente_id, conn)
+    sw2 = calcular_sw2(cliente_id, conn)
+    sw3 = calcular_sw3(cliente_id, conn)
+
+    score = round(0.40 * sw1 + 0.35 * sw2 + 0.25 * sw3, 2)
+    clase_puntaje = aplicar_matriz_decision(score)["categoria_riesgo"]
+    clase_final, veto_aplicado = aplicar_reglas_veto(clase_puntaje, dias_mora_efectiva)
+
+    decision = dict(decision_por_clase(clase_final))
+    if veto_aplicado is not None:
+        decision["accion"] = (
+            f"Regla de veto {veto_aplicado}: {dias_mora_efectiva} días de mora efectiva. "
+            + decision["accion"]
+        )
+
+    return {
+        "es_cold_start": False,
+        "score": score,
+        "sw1": sw1,
+        "sw2": sw2,
+        "sw3": sw3,
+        "dias_mora_efectiva": dias_mora_efectiva,
+        "clase_puntaje": clase_puntaje,
+        "clase_final": clase_final,
+        "veto_aplicado": veto_aplicado,
+        "decision": decision,
+        "cold_start": None,
+    }
+
+
 def calcular_score(cliente_id: int, conn: sqlite3.Connection) -> Tuple[float, str]:
     """
     Calcula el Scoring Crediticio Global S (0 - 100 pts) para un cliente.
     S = 0.40 * SW1 + 0.35 * SW2 + 0.25 * SW3.
     Retorna la tupla (score, categoria_riesgo).
     """
-    cold_start = evaluar_cold_start(cliente_id, conn)
-    if cold_start.get("es_cold_start"):
-        score = float(cold_start["score_semilla"])
-        cat_riesgo = cold_start["decision"]["categoria_riesgo"]
-        return (score, cat_riesgo)
-
-    sw1 = calcular_sw1(cliente_id, conn)
-    sw2 = calcular_sw2(cliente_id, conn)
-    sw3 = calcular_sw3(cliente_id, conn)
-
-    score_global = round(0.40 * sw1 + 0.35 * sw2 + 0.25 * sw3, 2)
-    decision = aplicar_matriz_decision(score_global)
-    cat_riesgo = decision["categoria_riesgo"]
-
-    return (score_global, cat_riesgo)
+    resultado = evaluar_cliente(cliente_id, conn)
+    return (resultado["score"], resultado["clase_final"])
 
 
 def registrar_snapshot(

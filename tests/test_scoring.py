@@ -10,6 +10,10 @@ from services import (
     aplicar_matriz_decision,
     evaluar_cold_start,
     registrar_snapshot,
+    calcular_mora_efectiva,
+    aplicar_reglas_veto,
+    decision_por_clase,
+    evaluar_cliente,
 )
 
 def test_cliente_al_dia_riesgo_bajo(db_conn):
@@ -307,5 +311,244 @@ def test_venta_credito_requiere_cliente_integrity_error(db_conn):
         VALUES (1, 1, 'credito', 4000.0)
     """)
     assert cursor.lastrowid is not None
+
+
+# ============================================================================
+# NUEVOS TESTS - MATRIZ DE SCORING V2.0 (REGLAS DE VETO Y REFERENCIA FIFO)
+# ============================================================================
+
+@pytest.mark.parametrize("clase,mora,esperado", [
+    ("A", 6, ("A", None)),
+    ("A", 7, ("C", "R1")),
+    ("B", 10, ("C", "R1")),
+    ("C", 8, ("C", None)),
+    ("D", 9, ("D", None)),
+    ("A", 11, ("D", "R2")),
+    ("C", 15, ("D", "R2")),
+    ("D", 11, ("D", None)),
+])
+def test_aplicar_reglas_veto_tabla(clase, mora, esperado):
+    assert aplicar_reglas_veto(clase, mora) == esperado
+
+
+def test_aplicar_reglas_veto_errores():
+    with pytest.raises(ValueError):
+        aplicar_reglas_veto("X", 0)
+    with pytest.raises(ValueError):
+        aplicar_reglas_veto("A", -1)
+
+
+def test_mora_fifo_ignora_cargo_antiguo_pagado(db_conn):
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente FIFO 1', 100000.0, 20000.0, 60, 'B', 'registro_completo')
+    """)
+    cid = cursor.lastrowid
+    # Cargo de 50.000 hace 60 días
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 50000.0, 50000.0, datetime('now', '-60 days'))
+    """, (cid,))
+    # Abono de 50.000 hace 55 días
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 50000.0, 0.0, datetime('now', '-55 days'))
+    """, (cid,))
+    # Cargo de 20.000 hace 3 días
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 20000.0, 20000.0, datetime('now', '-3 days'))
+    """, (cid,))
+    db_conn.commit()
+
+    assert calcular_mora_efectiva(cid, db_conn) == 0
+    assert calcular_sw1(cid, db_conn) == 100.0
+
+
+def test_mora_fifo_abono_parcial(db_conn):
+    cursor = db_conn.cursor()
+
+    # Cliente 1: cargo 30k hace 20d, cargo 30k hace 5d, abono 30k hace 2d -> saldo 30k, mora 0
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente FIFO Parcial 1', 100000.0, 30000.0, 60, 'B', 'registro_completo')
+    """)
+    cid1 = cursor.lastrowid
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 30000.0, 30000.0, datetime('now', '-20 days'))
+    """, (cid1,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 30000.0, 60000.0, datetime('now', '-5 days'))
+    """, (cid1,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 30000.0, 30000.0, datetime('now', '-2 days'))
+    """, (cid1,))
+
+    # Cliente 2: cargo 30k hace 20d, cargo 30k hace 5d, abono 20k hace 2d -> saldo 40k, mora 12
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente FIFO Parcial 2', 100000.0, 40000.0, 60, 'B', 'registro_completo')
+    """)
+    cid2 = cursor.lastrowid
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 30000.0, 30000.0, datetime('now', '-20 days'))
+    """, (cid2,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 30000.0, 60000.0, datetime('now', '-5 days'))
+    """, (cid2,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 20000.0, 40000.0, datetime('now', '-2 days'))
+    """, (cid2,))
+
+    db_conn.commit()
+
+    assert calcular_mora_efectiva(cid1, db_conn) == 0
+    assert calcular_mora_efectiva(cid2, db_conn) == 12
+
+
+def _crear_cliente_matriz(conn, nombre, dias_cargo_pendiente):
+    cursor = conn.cursor()
+    saldo_inicial = 20000.0 if dias_cargo_pendiente is not None else 0.0
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES (?, 500000.0, ?, 60, 'B', 'conocido_referido')
+    """, (nombre, saldo_inicial))
+    cid = cursor.lastrowid
+
+    # Producto canasta básica
+    cursor.execute("""
+        INSERT INTO productos (nombre, categoria, precio_venta, costo, stock, stock_minimo)
+        VALUES (?, 'canasta_basica', 1000.0, 700.0, 100, 10)
+    """, (f"Prod Canasta {cid}",))
+    pid = cursor.lastrowid
+
+    # 8 ventas en efectivo con usuario_id = 1, fechadas hace 1 a 8 días
+    for d in range(1, 9):
+        cursor.execute(f"""
+            INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total, monto_pagado, fecha_venta)
+            VALUES (1, ?, 'efectivo', 1000.0, 1000.0, datetime('now', '-{d} days'))
+        """, (cid,))
+        vid = cursor.lastrowid
+        cursor.execute("""
+            INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+            VALUES (?, ?, 'Item Canasta', 1.0, 1000.0, 1000.0)
+        """, (vid, pid))
+
+    # 3 ciclos ya pagados cronológicamente
+    ciclos = [
+        (60, 58),
+        (45, 43),
+        (35, 33),
+    ]
+    for d_cargo, d_abono in ciclos:
+        cursor.execute(f"""
+            INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+            VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-{d_cargo} days'))
+        """, (cid,))
+        cursor.execute(f"""
+            INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+            VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-{d_abono} days'))
+        """, (cid,))
+
+    if dias_cargo_pendiente is not None:
+        cursor.execute(f"""
+            INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+            VALUES (?, 'cargo', 20000.0, 20000.0, datetime('now', '-{dias_cargo_pendiente} days'))
+        """, (cid,))
+
+    conn.commit()
+    return cid
+
+
+def test_matriz_v2_caso_1_al_dia(db_conn):
+    cid = _crear_cliente_matriz(db_conn, "Caso 1 Al Día", None)
+    eval_res = evaluar_cliente(cid, db_conn)
+    score, clase_final = calcular_score(cid, db_conn)
+
+    assert eval_res["es_cold_start"] is False
+    assert eval_res["score"] == pytest.approx(85.625, abs=0.01)
+    assert eval_res["sw1"] == 100.0
+    assert eval_res["clase_puntaje"] == "A"
+    assert eval_res["clase_final"] == "A"
+    assert eval_res["veto_aplicado"] is None
+    assert eval_res["dias_mora_efectiva"] == 0
+    assert calcular_sw2(cid, db_conn) == 87.5
+    assert calcular_sw3(cid, db_conn) == 60.0
+    assert clase_final == "A"
+
+
+def test_matriz_v2_caso_2_preventiva(db_conn):
+    cid = _crear_cliente_matriz(db_conn, "Caso 2 Preventiva", 13)
+    eval_res = evaluar_cliente(cid, db_conn)
+    score, clase_final = calcular_score(cid, db_conn)
+
+    assert eval_res["es_cold_start"] is False
+    assert eval_res["score"] == pytest.approx(78.425, abs=0.01)
+    assert eval_res["sw1"] == 82.0
+    assert eval_res["clase_puntaje"] == "B"
+    assert eval_res["clase_final"] == "B"
+    assert eval_res["veto_aplicado"] is None
+    assert eval_res["dias_mora_efectiva"] == 5
+    assert calcular_sw2(cid, db_conn) == 87.5
+    assert calcular_sw3(cid, db_conn) == 60.0
+    assert clase_final == "B"
+
+
+def test_matriz_v2_caso_3_veto_r1(db_conn):
+    cid = _crear_cliente_matriz(db_conn, "Caso 3 Veto R1", 16)
+    eval_res = evaluar_cliente(cid, db_conn)
+    score, clase_final = calcular_score(cid, db_conn)
+
+    assert eval_res["es_cold_start"] is False
+    assert eval_res["score"] == pytest.approx(68.825, abs=0.01)
+    assert eval_res["sw1"] == 58.0
+    assert eval_res["clase_puntaje"] == "B"
+    assert eval_res["clase_final"] == "C"
+    assert eval_res["veto_aplicado"] == "R1"
+    assert eval_res["dias_mora_efectiva"] == 8
+    assert calcular_sw2(cid, db_conn) == 87.5
+    assert calcular_sw3(cid, db_conn) == 60.0
+    assert clase_final == "C"
+
+
+def test_matriz_v2_caso_4_veto_r2(db_conn):
+    cid = _crear_cliente_matriz(db_conn, "Caso 4 Veto R2", 23)
+    eval_res = evaluar_cliente(cid, db_conn)
+    score, clase_final = calcular_score(cid, db_conn)
+
+    assert eval_res["es_cold_start"] is False
+    assert eval_res["score"] == pytest.approx(61.625, abs=0.01)
+    assert eval_res["sw1"] == 40.0
+    assert eval_res["clase_puntaje"] == "B"
+    assert eval_res["clase_final"] == "D"
+    assert eval_res["veto_aplicado"] == "R2"
+    assert eval_res["dias_mora_efectiva"] == 15
+    assert calcular_sw2(cid, db_conn) == 87.5
+    assert calcular_sw3(cid, db_conn) == 60.0
+    assert clase_final == "D"
+
+
+def test_matriz_v2_caso_5_cold_start_solo_apodo(db_conn):
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente ColdStart Apodo', 0.0, 0.0, 60, 'B', 'solo_apodo')
+    """)
+    cid = cursor.lastrowid
+    db_conn.commit()
+
+    eval_res = evaluar_cliente(cid, db_conn)
+    assert eval_res["es_cold_start"] is True
+    assert eval_res["clase_final"] == "C"
+    assert eval_res["veto_aplicado"] is None
+    assert eval_res["cold_start"] is not None
+    assert eval_res["cold_start"]["cupo_semilla"] == 30000.0
 
 
