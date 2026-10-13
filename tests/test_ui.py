@@ -1273,6 +1273,168 @@ def test_perfil_alta_cliente_usa_dialogo_comun(ui_app):
     assert cxc._cliente_actual.nombre == "Cliente Perfil Dialogo"
 
 
+def test_perfil_historial_muestra_columna_cajero(ui_app):
+    """
+    Verifica que la pantalla de Perfil de Cliente muestre el nombre del cajero
+    en la columna 'cajero' del historial de movimientos.
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Vista Cajero",
+        conn=conn,
+        limite_credito=50000.0,
+    )
+    cxc_service.registrar_cargo(
+        cliente_id=cli.id,
+        monto=15000.0,
+        conn=conn,
+        usuario_id=1,
+    )
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    children = cxc_frame.tree_historial.get_children()
+    assert len(children) >= 1
+    item = cxc_frame.tree_historial.item(children[0])
+    valores = item["values"]
+    assert valores[5] == "Administrador del Sistema"
+
+
+def test_perfil_comprobante_usa_el_movimiento_seleccionado(ui_app, monkeypatch):
+    """
+    Verifica que al presionar el botón de comprobante se utilice estrictamente
+    el ID del movimiento seleccionado en la tabla de historial.
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Seleccion Comprobante",
+        conn=conn,
+        limite_credito=50000.0,
+    )
+    cargo = cxc_service.registrar_cargo(
+        cliente_id=cli.id,
+        monto=20000.0,
+        conn=conn,
+        usuario_id=1,
+    )
+    abono = cxc_service.registrar_abono(
+        cliente_id=cli.id,
+        monto=5000.0,
+        conn=conn,
+        usuario_id=1,
+    )
+
+    llamadas_pdf = []
+
+    def mock_generar_pdf(movimiento_id, conn):
+        llamadas_pdf.append(movimiento_id)
+        return "comprobante_dummy.pdf"
+
+    monkeypatch.setattr(reportes_service, "generar_comprobante_pdf", mock_generar_pdf)
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    monkeypatch.setattr(cxc_frame, "_abrir_pdf_sistema", lambda path: None)
+
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    # Seleccionar primer movimiento (cargo)
+    cxc_frame.tree_historial.selection_set(str(cargo.id))
+    cxc_frame.btn_comprobante.invoke()
+    assert llamadas_pdf == [cargo.id]
+
+    # Seleccionar segundo movimiento (abono)
+    cxc_frame.tree_historial.selection_set(str(abono.id))
+    cxc_frame.btn_comprobante.invoke()
+    assert llamadas_pdf == [cargo.id, abono.id]
+
+
+def test_perfil_comprobante_sin_seleccion_no_genera_pdf(ui_app, monkeypatch):
+    """
+    Verifica que si no hay ninguna fila seleccionada en el historial,
+    no se genere ningún PDF y se muestre el mensaje de error correspondiente.
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Sin Seleccion",
+        conn=conn,
+        limite_credito=50000.0,
+    )
+    cxc_service.registrar_cargo(
+        cliente_id=cli.id,
+        monto=10000.0,
+        conn=conn,
+        usuario_id=1,
+    )
+
+    llamado = False
+
+    def mock_generar_pdf(movimiento_id, conn):
+        nonlocal llamado
+        llamado = True
+        return "dummy.pdf"
+
+    monkeypatch.setattr(reportes_service, "generar_comprobante_pdf", mock_generar_pdf)
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    monkeypatch.setattr(cxc_frame, "_abrir_pdf_sistema", lambda path: None)
+
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    # Deseleccionar cualquier fila
+    for item in cxc_frame.tree_historial.selection():
+        cxc_frame.tree_historial.selection_remove(item)
+
+    cxc_frame.btn_comprobante.invoke()
+
+    assert llamado is False
+    assert cxc_frame.area_error_abono.tiene_error() is True
+    assert (
+        "Seleccione en el historial el movimiento del que quiere el comprobante."
+        in cxc_frame.area_error_abono._mensaje_actual
+    )
+
+
+def test_perfil_abono_queda_seleccionado_para_comprobante(ui_app):
+    """
+    Verifica que al registrar un abono en el perfil de cliente,
+    la fila recién agregada en el historial quede seleccionada y enfocada.
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Abono Seleccionado",
+        conn=conn,
+        limite_credito=50000.0,
+    )
+    cxc_service.registrar_cargo(
+        cliente_id=cli.id,
+        monto=20000.0,
+        conn=conn,
+        usuario_id=1,
+    )
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    cxc_frame.entry_monto_abono.delete(0, tk.END)
+    cxc_frame.entry_monto_abono.insert(0, "5000.00")
+    cxc_frame.entry_desc_abono.delete(0, tk.END)
+    cxc_frame.entry_desc_abono.insert(0, "Abono para test de seleccion")
+
+    cxc_frame.btn_registrar_abono.invoke()
+
+    seleccion = cxc_frame.tree_historial.selection()
+    assert len(seleccion) == 1
+    hist = cxc_service.obtener_historial_cxc(cli.id, conn)
+    abono_reciente = hist[-1]
+    assert seleccion[0] == str(abono_reciente.id)
+
+
+
 
 
 

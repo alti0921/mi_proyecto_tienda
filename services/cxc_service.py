@@ -26,6 +26,7 @@ def _row_to_cliente(row: sqlite3.Row) -> Cliente:
 def _row_to_cxc(row: sqlite3.Row) -> CuentaPorCobrar:
     """Mapea una fila de sqlite3.Row al DTO CuentaPorCobrar."""
     usuario_id = row["usuario_id"] if "usuario_id" in row.keys() else None
+    cajero_nombre = row["cajero_nombre"] if "cajero_nombre" in row.keys() else None
     return CuentaPorCobrar(
         id=row["id"],
         cliente_id=row["cliente_id"],
@@ -36,7 +37,9 @@ def _row_to_cxc(row: sqlite3.Row) -> CuentaPorCobrar:
         saldo_resultante=float(row["saldo_resultante"]),
         descripcion=row["descripcion"],
         fecha_movimiento=row["fecha_movimiento"],
+        cajero_nombre=cajero_nombre,
     )
+
 
 
 def crear_cliente(
@@ -399,15 +402,18 @@ def obtener_historial_cxc(
 ) -> List[CuentaPorCobrar]:
     """
     Retorna el historial completo inmutable de cargos y abonos del cliente,
-    ordenados cronológicamente.
+    ordenados cronológicamente, incluyendo el nombre del cajero asociado.
     """
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT * FROM cuentas_por_cobrar
-        WHERE cliente_id = ?
-        ORDER BY fecha_movimiento ASC, id ASC
+        SELECT cxc.*, u.nombre AS cajero_nombre
+        FROM cuentas_por_cobrar cxc
+        LEFT JOIN usuarios u ON cxc.usuario_id = u.id
+        WHERE cxc.cliente_id = ?
+        ORDER BY cxc.fecha_movimiento ASC, cxc.id ASC
         """,
         (cliente_id,),
     )
     return [_row_to_cxc(row) for row in cursor.fetchall()]
+

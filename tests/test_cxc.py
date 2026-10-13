@@ -427,3 +427,25 @@ def test_cliente_incluye_plazo_pactado(db_conn):
     assert cli_act.plazo_pactado_dias == 8
 
 
+def test_historial_incluye_nombre_del_cajero(db_conn):
+    """
+    Verifica que obtener_historial_cxc incluya el nombre del cajero
+    a través del LEFT JOIN con la tabla usuarios.
+    """
+    cli = crear_cliente(nombre="Cliente Historial Cajero", limite_credito=50000.0, conn=db_conn)
+    cur = db_conn.cursor()
+    cur.execute("SELECT nombre FROM usuarios WHERE id = 1")
+    admin_nombre = cur.fetchone()["nombre"]
+
+    cargo = registrar_cargo(cli.id, 10000.0, db_conn, usuario_id=1)
+    abono = registrar_abono(cli.id, 5000.0, db_conn, usuario_id=None)
+
+    hist = obtener_historial_cxc(cli.id, db_conn)
+    assert len(hist) == 2
+    assert hist[0].id == cargo.id
+    assert hist[0].cajero_nombre == admin_nombre
+    assert hist[1].id == abono.id
+    assert hist[1].cajero_nombre is None
+
+
+

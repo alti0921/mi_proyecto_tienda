@@ -515,7 +515,7 @@ class PantallaPerfilCliente(tk.Frame):
 
         self.btn_comprobante = ttk.Button(
             frame_btns_abono,
-            text="🧾 Ver Comprobante Digital",
+            text="🧾 Comprobante del movimiento seleccionado",
             command=self._ver_comprobante,
         )
         self.btn_comprobante.pack(side=tk.LEFT)
@@ -550,7 +550,7 @@ class PantallaPerfilCliente(tk.Frame):
         frame_tree_h.grid_rowconfigure(0, weight=1)
         frame_tree_h.grid_columnconfigure(0, weight=1)
 
-        columnas_h = ("id", "fecha", "tipo", "monto", "saldo", "descripcion")
+        columnas_h = ("id", "fecha", "tipo", "monto", "saldo", "cajero", "descripcion")
         self.tree_historial = ttk.Treeview(
             frame_tree_h,
             columns=columnas_h,
@@ -562,6 +562,7 @@ class PantallaPerfilCliente(tk.Frame):
         self.tree_historial.heading("tipo", text="Tipo")
         self.tree_historial.heading("monto", text="Monto")
         self.tree_historial.heading("saldo", text="Saldo Resultante")
+        self.tree_historial.heading("cajero", text="Cajero")
         self.tree_historial.heading("descripcion", text="Descripción / Referencia")
 
         self.tree_historial.column("id", width=35, anchor=tk.CENTER)
@@ -569,7 +570,9 @@ class PantallaPerfilCliente(tk.Frame):
         self.tree_historial.column("tipo", width=70, anchor=tk.CENTER)
         self.tree_historial.column("monto", width=85, anchor=tk.E)
         self.tree_historial.column("saldo", width=105, anchor=tk.E)
+        self.tree_historial.column("cajero", width=110, anchor=tk.W)
         self.tree_historial.column("descripcion", width=150, anchor=tk.W)
+
 
         scroll_h = ttk.Scrollbar(
             frame_tree_h, orient="vertical", command=self.tree_historial.yview
@@ -710,12 +713,14 @@ class PantallaPerfilCliente(tk.Frame):
             self.tree_historial.insert(
                 "",
                 tk.END,
+                iid=str(m.id),
                 values=(
                     m.id,
                     m.fecha_movimiento or "--",
                     tipo_fmt,
                     f"${m.monto:,.2f}",
                     f"${m.saldo_resultante:,.2f}",
+                    m.cajero_nombre or "No registrado",
                     m.descripcion or (f"Venta #{m.venta_id}" if m.venta_id else "S/D"),
                 ),
             )
@@ -875,6 +880,8 @@ class PantallaPerfilCliente(tk.Frame):
 
             # (a) Refrescar historial append-only
             self._cargar_historial_cxc(cli_fresco.id)
+            self.tree_historial.selection_set(str(abono_dto.id))
+            self.tree_historial.see(str(abono_dto.id))
 
             # Limpiar entradas de abono
             self.entry_monto_abono.delete(0, tk.END)
@@ -908,40 +915,29 @@ class PantallaPerfilCliente(tk.Frame):
     def _ver_comprobante(self) -> None:
         """
         Genera el comprobante en formato tirilla térmica 80mm en PDF (RF-CXC-04)
-        y lo abre en el visor predeterminado del sistema operativo.
+        del movimiento seleccionado en el historial y lo abre en el visor del sistema.
         """
         self.area_error_abono.limpiar()
 
-        movimiento_id: Optional[int] = None
-
-        # 1. Prioridad: movimiento seleccionado en la tabla de historial
         seleccion = self.tree_historial.selection()
-        if seleccion:
-            valores = self.tree_historial.item(seleccion[0], "values")
-            if valores and valores[0]:
-                try:
-                    movimiento_id = int(valores[0])
-                except (ValueError, TypeError):
-                    pass
-
-        # 2. Si no hay selección, usar el último abono registrado en la sesión
-        if movimiento_id is None and self._ultimo_abono and isinstance(self._ultimo_abono.get("abono_id"), int):
-            movimiento_id = self._ultimo_abono["abono_id"]
-
-        # 3. Si aún no hay ID, pero el cliente tiene movimientos en el historial
-        if movimiento_id is None and self._cliente_actual:
-            hijos = self.tree_historial.get_children()
-            if hijos:
-                ultimos_valores = self.tree_historial.item(hijos[-1], "values")
-                if ultimos_valores and ultimos_valores[0]:
-                    try:
-                        movimiento_id = int(ultimos_valores[0])
-                    except (ValueError, TypeError):
-                        pass
-
-        if movimiento_id is None:
+        if not seleccion:
             self.area_error_abono.mostrar_error(
-                "Seleccione un movimiento del historial o registre un abono para generar su comprobante en PDF."
+                "Seleccione en el historial el movimiento del que quiere el comprobante."
+            )
+            return
+
+        valores = self.tree_historial.item(seleccion[0], "values")
+        if not valores or not valores[0]:
+            self.area_error_abono.mostrar_error(
+                "Seleccione en el historial el movimiento del que quiere el comprobante."
+            )
+            return
+
+        try:
+            movimiento_id = int(valores[0])
+        except (ValueError, TypeError):
+            self.area_error_abono.mostrar_error(
+                "Seleccione en el historial el movimiento del que quiere el comprobante."
             )
             return
 

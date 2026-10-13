@@ -17,3 +17,6 @@ class CuentaPorCobrar:
     saldo_resultante: float = 0.0
     descripcion: Optional[str] = None
     fecha_movimiento: Optional[str] = None
+    # Campo de solo lectura para mostrar (viene de un JOIN con usuarios); no se persiste.
+    cajero_nombre: Optional[str] = None
+
