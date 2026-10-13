@@ -6,6 +6,10 @@ from services.auth_service import (
     verificar_password,
     obtener_usuario_por_id,
     obtener_usuario_por_username,
+    listar_usuarios,
+    cambiar_estado_usuario,
+    restablecer_password,
+    cambiar_password,
 )
 from models.usuario import Usuario
 
@@ -140,3 +144,137 @@ def test_obtener_usuario_por_id_y_username(db_conn):
 
     assert obtener_usuario_por_id(9999, db_conn) is None
     assert obtener_usuario_por_username("no_existe", db_conn) is None
+
+
+def test_listar_usuarios_incluye_semillas_ordenados(db_conn):
+    """Verifica que listar_usuarios incluya a los usuarios semilla ordenados por username."""
+    usuarios = listar_usuarios(db_conn)
+    usernames = [u.username for u in usuarios]
+    assert "admin" in usernames
+    assert "vendedor" in usernames
+    assert usernames == sorted(usernames)
+
+
+def test_crear_usuario_rechaza_password_corta(db_conn):
+    """Verifica que crear_usuario rechace contraseñas de menos de 6 caracteres."""
+    with pytest.raises(ValueError, match="al menos 6"):
+        crear_usuario(
+            username="test_corta",
+            password="abc",
+            nombre="Usuario Clave Corta",
+            conn=db_conn,
+        )
+
+
+def test_cambiar_estado_usuario_desactiva_y_reactiva(db_conn):
+    """Verifica que cambiar_estado_usuario desactive y reactive correctamente a un usuario."""
+    vendedor = crear_usuario(
+        username="vend_estado_test",
+        password="password123",
+        nombre="Vendedor Estado Test",
+        conn=db_conn,
+    )
+    # Desactivar usuario
+    actualizado = cambiar_estado_usuario(vendedor.id, False, db_conn)
+    assert actualizado.activo is False
+    assert autenticar_usuario("vend_estado_test", "password123", db_conn) is None
+
+    # Reactivar usuario
+    reactivado = cambiar_estado_usuario(vendedor.id, True, db_conn)
+    assert reactivado.activo is True
+    auth = autenticar_usuario("vend_estado_test", "password123", db_conn)
+    assert auth is not None
+    assert auth.id == vendedor.id
+
+
+def test_no_se_puede_desactivar_ultimo_admin(db_conn):
+    """Verifica la protección que impide desactivar al único administrador activo."""
+    # Desactivar al admin 1 (único administrador activo de las semillas)
+    with pytest.raises(ValueError, match="último administrador activo"):
+        cambiar_estado_usuario(1, False, db_conn)
+
+    # Verificar que sigue activo en la base de datos
+    admin_bd = obtener_usuario_por_id(1, db_conn)
+    assert admin_bd.activo is True
+
+    # Crear un segundo administrador activo
+    admin_dos = crear_usuario(
+        username="admin_dos_test",
+        password="password123",
+        nombre="Segundo Admin",
+        rol="admin",
+        conn=db_conn,
+    )
+
+    # Ahora desactivar al admin 1 sí debe permitirse
+    admin1_desactivado = cambiar_estado_usuario(1, False, db_conn)
+    assert admin1_desactivado.activo is False
+
+    # Desactivar al segundo admin (que ahora es el único activo) debe fallar
+    with pytest.raises(ValueError, match="último administrador activo"):
+        cambiar_estado_usuario(admin_dos.id, False, db_conn)
+
+
+def test_cambiar_estado_usuario_inexistente(db_conn):
+    """Verifica que intentar cambiar el estado de un usuario que no existe lance ValueError."""
+    with pytest.raises(ValueError, match="no encontrado"):
+        cambiar_estado_usuario(99999, False, db_conn)
+
+
+def test_restablecer_password(db_conn):
+    """Verifica la función administrativa de restablecimiento de contraseña."""
+    vendedor = crear_usuario(
+        username="vend_restablecer_test",
+        password="clave_original",
+        nombre="Vendedor Restablecer",
+        conn=db_conn,
+    )
+
+    # Restablecer contraseña a 'temporal1'
+    restablecer_password(vendedor.id, "temporal1", db_conn)
+
+    # Con la clave vieja ya no autentica, con la nueva sí
+    assert autenticar_usuario("vend_restablecer_test", "clave_original", db_conn) is None
+    nuevo_auth = autenticar_usuario("vend_restablecer_test", "temporal1", db_conn)
+    assert nuevo_auth is not None
+    assert nuevo_auth.id == vendedor.id
+
+    # El password_hash guardado empieza por 'sha256$' y no contiene la clave en plano
+    cur = db_conn.cursor()
+    cur.execute("SELECT password_hash FROM usuarios WHERE id = ?", (vendedor.id,))
+    pw_hash = cur.fetchone()["password_hash"]
+    assert pw_hash.startswith("sha256$")
+    assert "temporal1" not in pw_hash
+
+    # Restablecer con contraseña de menos de 6 caracteres debe fallar
+    with pytest.raises(ValueError, match="al menos 6"):
+        restablecer_password(vendedor.id, "abc", db_conn)
+
+
+def test_cambiar_password_propia(db_conn):
+    """Verifica el flujo de cambio de contraseña por parte del usuario autenticado."""
+    user = crear_usuario(
+        username="user_cambio_pw_test",
+        password="clave_inicial",
+        nombre="Usuario Cambio PW",
+        conn=db_conn,
+    )
+
+    # 1. Contraseña actual incorrecta
+    with pytest.raises(ValueError, match="actual no es correcta"):
+        cambiar_password(user.id, "clave_falsa", "nueva_clave_123", db_conn)
+    assert autenticar_usuario("user_cambio_pw_test", "clave_inicial", db_conn) is not None
+
+    # 2. Nueva contraseña igual a la actual
+    with pytest.raises(ValueError, match="diferente de la actual"):
+        cambiar_password(user.id, "clave_inicial", "clave_inicial", db_conn)
+
+    # 3. Nueva contraseña demasiado corta
+    with pytest.raises(ValueError, match="al menos 6"):
+        cambiar_password(user.id, "clave_inicial", "abc", db_conn)
+
+    # 4. Flujo correcto
+    cambiar_password(user.id, "clave_inicial", "clave_nueva_valida", db_conn)
+    assert autenticar_usuario("user_cambio_pw_test", "clave_nueva_valida", db_conn) is not None
+    assert autenticar_usuario("user_cambio_pw_test", "clave_inicial", db_conn) is None
+

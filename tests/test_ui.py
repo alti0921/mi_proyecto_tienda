@@ -12,7 +12,15 @@ from ui.pantallas.pos import PantallaPOS
 from ui.pantallas.perfil_cliente import PantallaPerfilCliente
 from ui.pantallas.inventario import PantallaInventario
 from ui.pantallas.reportes import PantallaReportes
-from services import cxc_service, pos_service, scoring_service, inventario_service, reportes_service
+from ui.pantallas.usuarios import PantallaUsuarios
+from services import (
+    cxc_service,
+    pos_service,
+    scoring_service,
+    inventario_service,
+    reportes_service,
+    auth_service,
+)
 
 
 def test_sesion_actual_ciclo_de_vida(db_conn):
@@ -1432,6 +1440,203 @@ def test_perfil_abono_queda_seleccionado_para_comprobante(ui_app):
     hist = cxc_service.obtener_historial_cxc(cli.id, conn)
     abono_reciente = hist[-1]
     assert seleccion[0] == str(abono_reciente.id)
+
+
+def _login_como(ui_app, username: str, password: str) -> None:
+    login_frame: PantallaLogin = ui_app.pantallas["login"]
+    ui_app.cerrar_sesion()
+    login_frame.entry_usuario.delete(0, tk.END)
+    login_frame.entry_usuario.insert(0, username)
+    login_frame.entry_password.delete(0, tk.END)
+    login_frame.entry_password.insert(0, password)
+    login_frame._procesar_login()
+
+
+def test_usuarios_admin_ve_panel_completo_y_crea_usuario(ui_app):
+    """
+    Verifica que el rol administrador tenga acceso al panel_admin completo
+    y pueda dar de alta nuevos usuarios con visibilidad inmediata en el Treeview y persistencia en BD.
+    """
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("usuarios")
+    usuarios_frame: PantallaUsuarios = ui_app.pantallas["usuarios"]
+
+    # panel_admin.grid_info() no está vacío
+    assert bool(usuarios_frame.panel_admin.grid_info()) is True
+
+    # Crea un usuario con nombre único
+    username_unico = "user_admin_ui_test_01"
+    usuarios_frame.entry_nuevo_username.delete(0, tk.END)
+    usuarios_frame.entry_nuevo_username.insert(0, username_unico)
+    usuarios_frame.entry_nuevo_nombre.delete(0, tk.END)
+    usuarios_frame.entry_nuevo_nombre.insert(0, "Usuario Creado Desde UI")
+    usuarios_frame.combo_nuevo_rol.set("vendedor")
+    usuarios_frame.entry_nuevo_password.delete(0, tk.END)
+    usuarios_frame.entry_nuevo_password.insert(0, "clave123456")
+
+    usuarios_frame._crear_usuario()
+
+    assert usuarios_frame.area_error_admin.tiene_error() is False
+    assert "creado con éxito" in usuarios_frame.lbl_exito_admin.cget("text")
+
+    # Aparece en la base de datos
+    u_bd = auth_service.obtener_usuario_por_username(username_unico, ui_app.sesion.conn)
+    assert u_bd is not None
+    assert u_bd.nombre == "Usuario Creado Desde UI"
+    assert u_bd.rol == "vendedor"
+
+    # Aparece en el tree_usuarios
+    hijos = usuarios_frame.tree_usuarios.get_children()
+    assert str(u_bd.id) in hijos
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_usuarios_vendedor_solo_ve_cambio_de_password(ui_app):
+    """
+    Verifica que el rol vendedor solo tenga visible el panel de autoservicio de contraseña,
+    con panel_admin completamente retirado de la cuadrícula.
+    """
+    _login_como(ui_app, "vendedor", "vend123")
+    ui_app.navegar_a("usuarios")
+    usuarios_frame: PantallaUsuarios = ui_app.pantallas["usuarios"]
+
+    assert usuarios_frame.panel_admin.grid_info() == {}
+    assert bool(usuarios_frame.panel_mi_password.grid_info()) is True
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_usuarios_permisos_reactivos_admin_luego_vendedor(ui_app):
+    """
+    Verifica que los permisos y visibilidad de paneles se ajusten reactivamente
+    en la misma instancia de App al alternar entre admin y vendedor.
+    """
+    usuarios_frame: PantallaUsuarios = ui_app.pantallas["usuarios"]
+
+    # 1. Sesión como Admin: panel visible
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("usuarios")
+    assert bool(usuarios_frame.panel_admin.grid_info()) is True
+
+    # 2. Cerrar sesión y entrar como Vendedor: panel oculto
+    _login_como(ui_app, "vendedor", "vend123")
+    ui_app.navegar_a("usuarios")
+    assert usuarios_frame.panel_admin.grid_info() == {}
+    assert bool(usuarios_frame.panel_mi_password.grid_info()) is True
+
+    # Restaurar sesión admin
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_usuarios_ui_no_permite_desactivar_ultimo_admin(ui_app):
+    """
+    Verifica que la UI impida desactivar al último administrador activo,
+    mostrando el error correspondiente y preservando el estado activo en la BD.
+    """
+    _login_como(ui_app, "admin", "admin123")
+    conn = ui_app.sesion.conn
+
+    # Si hay otros administradores activos creados por tests previos, desactivarlos para asegurar la condición
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM usuarios WHERE rol = 'admin' AND activo = 1 AND id != 1")
+    for r in cur.fetchall():
+        auth_service.cambiar_estado_usuario(r["id"], False, conn)
+
+    ui_app.navegar_a("usuarios")
+    usuarios_frame: PantallaUsuarios = ui_app.pantallas["usuarios"]
+
+    # Selecciona la fila del admin semilla (id 1)
+    usuarios_frame.tree_usuarios.selection_set("1")
+    usuarios_frame._cambiar_estado_seleccionado()
+
+    assert usuarios_frame.area_error_admin.tiene_error() is True
+    assert "último administrador activo" in usuarios_frame.area_error_admin._mensaje_actual
+
+    admin_semilla = auth_service.obtener_usuario_por_id(1, conn)
+    assert admin_semilla.activo is True
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_usuarios_cambiar_mi_password_confirmacion_y_exito(ui_app):
+    """
+    Verifica la validación de coincidencia de contraseña nueva y confirmación,
+    así como el cambio exitoso de contraseña para el usuario en sesión.
+    """
+    conn = ui_app.sesion.conn
+    username_test = "pw_test_ui_user_unique"
+    auth_service.crear_usuario(
+        username=username_test,
+        password="clave_ui_1",
+        nombre="Usuario Test PW UI",
+        rol="vendedor",
+        conn=conn,
+    )
+
+    _login_como(ui_app, username_test, "clave_ui_1")
+    ui_app.navegar_a("usuarios")
+    usuarios_frame: PantallaUsuarios = ui_app.pantallas["usuarios"]
+
+    # 1. Nueva contraseña y confirmación no coinciden
+    usuarios_frame.entry_pw_actual.delete(0, tk.END)
+    usuarios_frame.entry_pw_actual.insert(0, "clave_ui_1")
+    usuarios_frame.entry_pw_nueva.delete(0, tk.END)
+    usuarios_frame.entry_pw_nueva.insert(0, "clave_ui_2")
+    usuarios_frame.entry_pw_confirmar.delete(0, tk.END)
+    usuarios_frame.entry_pw_confirmar.insert(0, "clave_ui_distinta")
+
+    usuarios_frame._cambiar_mi_password()
+
+    assert usuarios_frame.area_error_mi_password.tiene_error() is True
+    assert "no coinciden" in usuarios_frame.area_error_mi_password._mensaje_actual
+    assert auth_service.autenticar_usuario(username_test, "clave_ui_1", conn) is not None
+
+    # 2. Flujo correcto con confirmación idéntica
+    usuarios_frame.entry_pw_confirmar.delete(0, tk.END)
+    usuarios_frame.entry_pw_confirmar.insert(0, "clave_ui_2")
+
+    usuarios_frame._cambiar_mi_password()
+
+    assert usuarios_frame.area_error_mi_password.tiene_error() is False
+    assert "actualizada con éxito" in usuarios_frame.lbl_exito_mi_password.cget("text")
+    assert auth_service.autenticar_usuario(username_test, "clave_ui_2", conn) is not None
+    assert auth_service.autenticar_usuario(username_test, "clave_ui_1", conn) is None
+
+    # Restaurar sesión admin
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_perfil_historial_muestra_no_registrado(ui_app):
+    """
+    Verifica que en el historial de la ficha del cliente, si un movimiento no tiene usuario_id
+    registrado (None), la columna Cajero muestre 'No registrado'.
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Sin Cajero Registrado",
+        conn=conn,
+        limite_credito=30000.0,
+    )
+    cxc_service.registrar_cargo(
+        cliente_id=cli.id,
+        monto=5000.0,
+        conn=conn,
+        usuario_id=None,
+    )
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    children = cxc_frame.tree_historial.get_children()
+    assert len(children) >= 1
+    item = cxc_frame.tree_historial.item(children[0])
+    valores = item["values"]
+    assert valores[5] == "No registrado"
+
+    _login_como(ui_app, "admin", "admin123")
+
 
 
 

@@ -188,6 +188,13 @@ class BarraSuperior(tk.Frame):
         )
         self.btn_rep.pack(side=tk.LEFT, padx=3)
 
+        self.btn_usuarios = ttk.Button(
+            self.frame_nav,
+            text="🔑 Usuarios",
+            command=lambda: self._navegar("usuarios"),
+        )
+        self.btn_usuarios.pack(side=tk.LEFT, padx=3)
+
         # 3. Lado derecho: Información del usuario y Botón de Cierre
         self.frame_derecho = tk.Frame(self, background=COLOR_BARRA_SUPERIOR)
         self.frame_derecho.pack(side=tk.RIGHT)

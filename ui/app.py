@@ -12,6 +12,7 @@ from ui.pantallas.pos import PantallaPOS
 from ui.pantallas.perfil_cliente import PantallaPerfilCliente
 from ui.pantallas.inventario import PantallaInventario
 from ui.pantallas.reportes import PantallaReportes
+from ui.pantallas.usuarios import PantallaUsuarios
 
 
 class PantallaPlaceholder(tk.Frame):
@@ -121,6 +122,14 @@ class App(tk.Tk):
             sesion=self.sesion,
         )
         self.pantallas["reportes"].grid(row=0, column=0, sticky="nsew")
+
+        # Pantalla 6: Gestión de Usuarios
+        self.pantallas["usuarios"] = PantallaUsuarios(
+            parent=self.contenedor,
+            app=self,
+            sesion=self.sesion,
+        )
+        self.pantallas["usuarios"].grid(row=0, column=0, sticky="nsew")
 
     def navegar_a(self, nombre_pantalla: str) -> None:
         """

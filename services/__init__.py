@@ -50,6 +50,10 @@ from services.auth_service import (
     verificar_password,
     obtener_usuario_por_id,
     obtener_usuario_por_username,
+    listar_usuarios,
+    cambiar_estado_usuario,
+    restablecer_password,
+    cambiar_password,
 )
 from services.reportes_service import (
     obtener_arqueo_diario,
@@ -96,6 +100,10 @@ __all__ = [
     "verificar_password",
     "obtener_usuario_por_id",
     "obtener_usuario_por_username",
+    "listar_usuarios",
+    "cambiar_estado_usuario",
+    "restablecer_password",
+    "cambiar_password",
     "obtener_arqueo_diario",
     "obtener_consolidado_cartera",
     "clasificar_banda_mora",
