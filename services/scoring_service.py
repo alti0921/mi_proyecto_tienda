@@ -1,5 +1,5 @@
 import sqlite3
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from models.scoring import ScoringHistorial
 
 # Constantes de negocio: Plazo por defecto y plazos válidos permitidos (RF-CXC-07)
@@ -360,32 +360,106 @@ def aplicar_matriz_decision(score: float) -> Dict[str, Any]:
     return decision_por_clase(clase)
 
 
+def _contar_ciclos_oportunos(cliente_id: int, conn: sqlite3.Connection) -> int:
+    """
+    Cuenta los ciclos de pago oportunos del cliente (RF-SCR-02 / Matriz v2 §6).
+    Un ciclo oportuno se define como un abono registrado mientras la mora efectiva del
+    cliente era 0 (es decir, dentro del plazo pactado tras el cargo pendiente más antiguo).
+
+    Algoritmo (reproduce el ledger en orden, con la misma regla FIFO de _obtener_dias_transcurridos):
+      a. Obtiene el plazo pactado del cliente (obtener_plazo_pactado).
+      b. Lee los movimientos de cuentas_por_cobrar ordenados por fecha_movimiento ASC, id ASC,
+         con tipo_movimiento, monto y julianday(fecha_movimiento) AS jd.
+      c. Mantiene una cola FIFO de cargos pendientes [[jd, monto_restante], ...]:
+         - Cargo: lo agrega a la cola.
+         - Abono:
+             i. Busca el primer cargo de la cola con monto_restante > 0.01. Si no existe
+                (abono sin deuda previa), el abono NO cuenta.
+             ii. Si existe: dias = int(abono.jd - cargo.jd) (truncado, mínimo 0);
+                 mora_en_abono = max(0, dias - plazo). Si mora_en_abono == 0, suma 1 ciclo.
+             iii. Imputa el monto del abono a la cola en orden FIFO (descuenta de los cargos
+                  más antiguos primero).
+      d. Retorna el total de ciclos oportunos acumulados.
+
+    Limitación:
+      Se evalúa contra el plazo pactado ACTUAL del cliente, dado que el sistema no almacena
+      un historial de cambios temporales de dicho plazo.
+    """
+    plazo = obtener_plazo_pactado(cliente_id, conn)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT tipo_movimiento, monto, julianday(fecha_movimiento) AS jd
+        FROM cuentas_por_cobrar
+        WHERE cliente_id = ?
+        ORDER BY fecha_movimiento ASC, id ASC
+    """, (cliente_id,))
+    movimientos = cursor.fetchall()
+
+    cola_cargos: List[List[float]] = []
+    ciclos_oportunos = 0
+
+    for m in movimientos:
+        tipo = m["tipo_movimiento"]
+        monto = float(m["monto"] or 0.0)
+        jd = float(m["jd"]) if m["jd"] is not None else 0.0
+
+        if tipo == "cargo":
+            cola_cargos.append([jd, monto])
+        elif tipo == "abono":
+            # i. Busca el primer cargo de la cola con monto_restante > 0.01
+            primer_cargo = None
+            for cargo in cola_cargos:
+                if cargo[1] > 0.01:
+                    primer_cargo = cargo
+                    break
+
+            if primer_cargo is None:
+                # Abono sin deuda previa: el abono NO cuenta
+                continue
+
+            # ii. Si existe: dias = int(abono.jd - cargo.jd) (truncado, mínimo 0)
+            dias = max(0, int(jd - primer_cargo[0]))
+            mora_en_abono = max(0, dias - plazo)
+            if mora_en_abono == 0:
+                ciclos_oportunos += 1
+
+            # iii. Imputa el monto del abono a la cola en orden FIFO
+            monto_por_imputar = monto
+            for cargo in cola_cargos:
+                if cargo[1] <= 0.01:
+                    continue
+                descontar = min(cargo[1], monto_por_imputar)
+                cargo[1] -= descontar
+                monto_por_imputar -= descontar
+                if monto_por_imputar <= 0.01:
+                    break
+
+    return ciclos_oportunos
+
+
 def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:
     """
-    Protocolo de Arranque en Frío (RF-SCR-02):
-    Evalúa a clientes sin historial previo (menos de 3 ciclos de pago oportunos registrados en CxC).
-    IMPORTANTE: Si el cliente presenta saldo activo con más de 8 días de mora,
-    se desactiva el Cold-Start para ser evaluado inmediatamente por el cálculo general de mora.
+    Protocolo de Arranque en Frío (RF-SCR-02 / Matriz v2 §6):
+    Evalúa a clientes sin historial previo suficiente (menos de 3 ciclos de pago oportunos
+    registrados en CxC dentro del plazo pactado del cliente).
+
+    Salida anticipada:
+      1. Si el cliente presenta mora efectiva activa > 0 días (según su plazo pactado),
+         se desactiva inmediatamente el Cold-Start y se evalúa por el cálculo general de mora.
+      2. Si el cliente acumula 3 o más ciclos de pago oportunos (contados por _contar_ciclos_oportunos),
+         sale del Cold-Start y pasa a evaluación completa con puntaje S.
     """
-    # 1. Desactivación de Cold-Start si existe mora activa mayor al plazo estándar (8 días)
+    # 1. Desactivación de Cold-Start si existe mora activa mayor al plazo del cliente
     if calcular_mora_efectiva(cliente_id, conn) > 0:
         return {"es_cold_start": False}
 
-    cursor = conn.cursor()
-
-    # 2. Contar ciclos de abono registrados
-    cursor.execute("""
-        SELECT COUNT(*) AS total_ciclos
-        FROM cuentas_por_cobrar
-        WHERE cliente_id = ? AND tipo_movimiento = 'abono'
-    """, (cliente_id,))
-    row = cursor.fetchone()
-    total_ciclos = row["total_ciclos"] if row else 0
-
+    # 2. Contar ciclos de abono oportunos (Matriz v2 §6 / RF-SCR-02)
+    total_ciclos = _contar_ciclos_oportunos(cliente_id, conn)
     if total_ciclos >= 3:
-        return {"es_cold_start": False}
+        return {"es_cold_start": False, "ciclos_completados": total_ciclos}
 
     sw3 = calcular_sw3(cliente_id, conn)
+    cursor = conn.cursor()
     cursor.execute("SELECT nivel_vinculo FROM clientes WHERE id = ?", (cliente_id,))
     cli_info = cursor.fetchone()
     vinculo = (cli_info["nivel_vinculo"] or "").lower() if cli_info else "solo_apodo"
@@ -401,17 +475,18 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
         cupo_semilla = 30000.0
         cat_riesgo = "C"
 
+    plazo = obtener_plazo_pactado(cliente_id, conn)
     score_semilla = sw3
     decision_cold_start = {
         "categoria_riesgo": cat_riesgo,
         "nivel_riesgo": "Cold-Start Semilla",
         "aprobado": True,
-        "accion": f"Asignación de cupo semilla conservador (${cupo_semilla:,.0f} COP) a plazo máximo de 15 días.",
+        "accion": f"Cupo semilla sugerido de ${cupo_semilla:,.0f} COP con plazo pactado de {plazo} días. Requiere confirmación del administrador.",
         "sugerencia_cupo": "Cupo Semilla",
         "factor_cupo": 1.00,
         "congelado": False,
         "bloqueado": False,
-        "abono_minimo_pct": 0.0
+        "abono_minimo_pct": 0.0,
     }
 
     return {
@@ -419,9 +494,10 @@ def evaluar_cold_start(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, A
         "ciclos_completados": total_ciclos,
         "score_semilla": score_semilla,
         "cupo_semilla": cupo_semilla,
-        "plazo_dias": 15,
-        "decision": decision_cold_start
+        "plazo_dias": plazo,
+        "decision": decision_cold_start,
     }
+
 
 
 def evaluar_cliente(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:

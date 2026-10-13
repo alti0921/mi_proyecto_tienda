@@ -154,9 +154,10 @@ def test_cliente_cold_start(db_conn):
 
     assert cs_res["es_cold_start"] is True
     assert 30000.0 <= cs_res["cupo_semilla"] <= 50000.0
-    assert cs_res["plazo_dias"] == 15
+    assert cs_res["plazo_dias"] == 8  # Matriz v2 §6: plazo sugerido = plazo pactado del cliente (8 por defecto)
     assert cs_res["score_semilla"] == 60.0
     assert cs_res["decision"]["nivel_riesgo"] == "Cold-Start Semilla"
+
 
 
 def test_cliente_moroso_sin_abonos(db_conn):
@@ -664,5 +665,230 @@ def test_cliente_quincenal_que_paga_el_dia_15_no_queda_en_mora(db_conn, crear_cl
     res = evaluar_cliente(cid, db_conn)
     assert res["dias_mora_efectiva"] == 0
     assert res["veto_aplicado"] is None
+
+
+def test_ciclos_oportunos_solo_cuentan_abonos_dentro_del_plazo(db_conn):
+    """
+    Verifica que solo los abonos registrados dentro del plazo pactado (mora 0)
+    cuenten como ciclos oportunos para salir de Cold-Start (RF-SCR-02, Matriz v2 §6).
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo, plazo_pactado_dias)
+        VALUES ('Cliente Oportuno', 50000.0, 0.0, 60, 'B', 'conocido_referido', 8)
+    """)
+    cid = cursor.lastrowid
+
+    # Par 1: cargo hace 40, abono hace 38 (2 días -> oportuno, cuenta)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-40 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-38 days'))
+    """, (cid,))
+
+    # Par 2: cargo hace 30, abono hace 15 (15 días -> mora 7 días -> NO oportuno, no cuenta)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-30 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-15 days'))
+    """, (cid,))
+
+    # Par 3: cargo hace 10, abono hace 9 (1 día -> oportuno, cuenta)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-10 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-9 days'))
+    """, (cid,))
+    db_conn.commit()
+
+    cs = evaluar_cold_start(cid, db_conn)
+    assert cs["es_cold_start"] is True
+    assert cs["ciclos_completados"] == 2
+    assert cs["plazo_dias"] == 8
+
+    # Agrega 4to par: cargo hace 5, abono hace 4 (1 día -> oportuno, suma 3er ciclo)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-5 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-4 days'))
+    """, (cid,))
+    db_conn.commit()
+
+    cs2 = evaluar_cold_start(cid, db_conn)
+    assert cs2["es_cold_start"] is False
+
+
+def test_ciclos_oportunos_respetan_plazo_quincenal(db_conn):
+    """
+    Verifica que un cliente quincenal (plazo 15) califique como oportuno
+    un abono pagado a los 15 días (mora 0), alcanzando los 3 ciclos requeridos.
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo, plazo_pactado_dias)
+        VALUES ('Cliente Quincenal CS', 50000.0, 0.0, 60, 'B', 'conocido_referido', 8)
+    """)
+    cid = cursor.lastrowid
+
+    # Par 1: 40d -> 38d (2 días)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-40 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-38 days'))
+    """, (cid,))
+
+    # Par 2: 30d -> 15d (15 días)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-30 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-15 days'))
+    """, (cid,))
+
+    # Par 3: 10d -> 9d (1 día)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-10 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-9 days'))
+    """, (cid,))
+
+    # UPDATE a plazo 15 antes de evaluar
+    cursor.execute("UPDATE clientes SET plazo_pactado_dias = 15 WHERE id = ?", (cid,))
+    db_conn.commit()
+
+    cs = evaluar_cold_start(cid, db_conn)
+    assert cs["es_cold_start"] is False
+
+
+def test_abono_sin_cargo_previo_no_es_ciclo_oportuno(db_conn):
+    """
+    Verifica que abonos registrados sin cargo previo (huérfanos o a favor)
+    no sumen como ciclos de pago oportunos (RF-SCR-02).
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo, plazo_pactado_dias)
+        VALUES ('Cliente Abonos Huérfanos', 50000.0, 0.0, 60, 'B', 'conocido_referido', 8)
+    """)
+    cid = cursor.lastrowid
+
+    # 3 abonos sin ningún cargo previo
+    for d in (15, 10, 5):
+        cursor.execute(f"""
+            INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+            VALUES (?, 'abono', 5000.0, 0.0, datetime('now', '-{d} days'))
+        """, (cid,))
+    db_conn.commit()
+
+    cs = evaluar_cold_start(cid, db_conn)
+    assert cs["es_cold_start"] is True
+    assert cs["ciclos_completados"] == 0
+
+
+def test_abonos_parciales_cuentan_por_separado(db_conn):
+    """
+    Verifica que abonos parciales oportunos sobre un mismo cargo cuenten
+    individualmente como ciclos oportunos (Matriz v2 §6).
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo, plazo_pactado_dias)
+        VALUES ('Cliente Parciales', 50000.0, 0.0, 60, 'B', 'conocido_referido', 8)
+    """)
+    cid = cursor.lastrowid
+
+    # Cargo 30.000 hace 20 días
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 30000.0, 30000.0, datetime('now', '-20 days'))
+    """, (cid,))
+
+    # Abonos de 10.000 hace 19, 18 y 17 días (saldo final 0)
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 20000.0, datetime('now', '-19 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 10000.0, datetime('now', '-18 days'))
+    """, (cid,))
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-17 days'))
+    """, (cid,))
+    db_conn.commit()
+
+    cs = evaluar_cold_start(cid, db_conn)
+    assert cs["es_cold_start"] is False
+
+
+def test_cold_start_plazo_y_accion_segun_plazo_del_cliente(db_conn):
+    """
+    Verifica que evaluar_cold_start adopte dinámicamente el plazo pactado del cliente (8 vs 15 días)
+    en el campo plazo_dias y en la redacción de la acción sugerida (RF-SCR-02, Matriz v2 §6).
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente CS Plazo', 0.0, 0.0, 100, 'A', 'registro_completo')
+    """)
+    cid = cursor.lastrowid
+    db_conn.commit()
+
+    cs = evaluar_cold_start(cid, db_conn)
+    assert cs["es_cold_start"] is True
+    assert cs["plazo_dias"] == 8
+    assert "plazo pactado de 8 días" in cs["decision"]["accion"]
+    assert "15 días" not in cs["decision"]["accion"]
+
+    cursor.execute("UPDATE clientes SET plazo_pactado_dias = 15 WHERE id = ?", (cid,))
+    db_conn.commit()
+
+    cs15 = evaluar_cold_start(cid, db_conn)
+    assert cs15["es_cold_start"] is True
+    assert cs15["plazo_dias"] == 15
+    assert "plazo pactado de 15 días" in cs15["decision"]["accion"]
+
+
+def test_cold_start_no_persiste_cupo(db_conn):
+    """
+    Verifica que la sugerencia de cupo semilla en Cold-Start no modifique
+    el límite de crédito en la base de datos de manera automática (RF-SCR-02).
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente Sin Cupo Persistido', 0.0, 0.0, 60, 'B', 'conocido_referido')
+    """)
+    cid = cursor.lastrowid
+    db_conn.commit()
+
+    cs = evaluar_cold_start(cid, db_conn)
+    assert cs["es_cold_start"] is True
+
+    cursor.execute("SELECT limite_credito FROM clientes WHERE id = ?", (cid,))
+    row = cursor.fetchone()
+    assert row["limite_credito"] == 0.0
+
 
 

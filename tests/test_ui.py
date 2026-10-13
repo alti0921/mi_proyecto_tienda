@@ -1151,6 +1151,30 @@ def test_perfil_cliente_asigna_plazo_quincenal_admin_y_bloqueo_vendedor(ui_app):
         ui_app.withdraw()
 
 
+def test_perfil_cliente_cold_start_muestra_plazo_del_cliente(ui_app):
+    """
+    Verifica que al cargar en Perfil de Cliente un cliente nuevo en cold-start (solo_apodo),
+    la sugerencia de cupo muestre '$30,000' y 'plazo pactado de 8 días', y combo_plazo
+    se precargue con '8 días (semanal)' (Matriz v2 §6).
+    """
+    conn = ui_app.sesion.conn
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente CS Solo Apodo Plazo",
+        nivel_vinculo="solo_apodo",
+        conn=conn,
+    )
+
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    sug_txt = cxc_frame.lbl_sugerencia_cupo.cget("text")
+    assert "$30,000" in sug_txt
+    assert "plazo pactado de 8 días" in sug_txt
+    assert cxc_frame.combo_plazo.get() == "8 días (semanal)"
+
+
+
 
 
 

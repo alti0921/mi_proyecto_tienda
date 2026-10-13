@@ -637,17 +637,29 @@ class PantallaPerfilCliente(tk.Frame):
             )
             self.entry_nuevo_cupo.delete(0, tk.END)
             self.entry_nuevo_cupo.insert(0, f"{cupo_sug:.2f}")
+            if cold_start.get("plazo_dias") == 15:
+                self.combo_plazo.set("15 días (quincenal)")
+            else:
+                self.combo_plazo.set("8 días (semanal)")
         else:
-            self.lbl_sugerencia_cupo.config(
-                text=f"💡 Cliente con historial activo ({cold_start.get('ciclos_completados', 3)}+ ciclos de abono)."
-            )
+            if "ciclos_completados" in cold_start:
+                ciclos = cold_start.get("ciclos_completados", 3)
+                txt_historial = (
+                    f"💡 Cliente con historial: {ciclos} o más ciclos de pago oportunos; "
+                    f"se evalúa con el puntaje completo."
+                )
+            else:
+                txt_historial = "💡 Cliente fuera del arranque en frío por mora; se evalúa con el puntaje completo."
+
+            self.lbl_sugerencia_cupo.config(text=txt_historial)
             self.entry_nuevo_cupo.delete(0, tk.END)
             self.entry_nuevo_cupo.insert(0, f"{cliente.limite_credito:.2f}")
 
-        if cliente.plazo_pactado_dias == 15:
-            self.combo_plazo.set("15 días (quincenal)")
-        else:
-            self.combo_plazo.set("8 días (semanal)")
+            if cliente.plazo_pactado_dias == 15:
+                self.combo_plazo.set("15 días (quincenal)")
+            else:
+                self.combo_plazo.set("8 días (semanal)")
+
 
     def _actualizar_scoring_visual(self, cliente_id: int) -> None:
         """Calcula de forma fresca e instantánea el score y actualiza los badges."""
