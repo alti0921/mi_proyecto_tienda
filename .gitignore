@@ -5,4 +5,5 @@ __pycache__/
 entrega_*.txt
 diagnostico_*.txt
 db/*.bak-*
+scripts/resultados_rendimiento.csv
 
