@@ -2,6 +2,7 @@ import os
 import sqlite3
 import pytest
 import tkinter as tk
+from datetime import datetime, timezone
 
 from models.usuario import Usuario
 from ui.sesion import SesionActual
@@ -1808,6 +1809,44 @@ def test_pos_enter_codigo_de_producto_inactivo_no_agrega(ui_app):
     assert len(pos_frame._carrito) == carrito_antes
 
     _login_como(ui_app, "admin", "admin123")
+
+
+def test_perfil_historial_muestra_hora_local(ui_app):
+    """
+    Verifica que en la pantalla de Perfil de Cliente la columna de fecha
+    en el historial de CxC muestre la fecha convertida a la hora local del sistema.
+    """
+    conn = ui_app.sesion.conn
+    dt_local = datetime(2026, 10, 13, 20, 0, 0)
+    dt_utc = dt_local.astimezone(timezone.utc)
+    fecha_utc_txt = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    cli = cxc_service.crear_cliente(
+        nombre="Cliente Historial Hora Local",
+        conn=conn,
+        limite_credito=100000.0,
+    )
+
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento, descripcion, usuario_id)
+        VALUES (?, 'cargo', 25000.0, 25000.0, ?, 'Cargo prueba hora local', 1)
+    """, (cli.id, fecha_utc_txt))
+    cargo_id = cur.lastrowid
+    cur.execute("UPDATE clientes SET saldo_actual = 25000.0 WHERE id = ?", (cli.id,))
+    conn.commit()
+
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+
+    item = cxc_frame.tree_historial.item(str(cargo_id))
+    valores = item["values"]
+    assert valores[1] == "2026-10-13 20:00:00"
+
+    _login_como(ui_app, "admin", "admin123")
+
 
 
 

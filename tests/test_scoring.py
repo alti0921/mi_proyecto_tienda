@@ -947,5 +947,78 @@ def test_sugerencia_cupo_cold_start(db_conn):
     assert sug["plazo_dias"] == 8
 
 
+def test_v2_2_dominancia_por_valor(db_conn):
+    """
+    Verifica que V2.2 calcule dominancia por valor comprado y no por conteo de líneas.
+    Cliente sin otras ventas; 1 venta hoy con 1 producto canasta_basica (subtotal 10.000)
+    y 3 productos consumo_suntuario (subtotal 100 cada uno, total 300).
+    Por valor: 10000 / 10300 = 97.08% >= 60% -> V2.2 = 100.
+    V2.1 = 10 (1 venta en 30 días).
+    calcular_sw2 = 0.5 * 10 + 0.5 * 100 = 55.0.
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente V2_2 Valor', 0.0, 0.0, 60, 'B', 'solo_apodo')
+    """)
+    cid = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO productos (nombre, categoria, precio_venta, costo, stock, stock_minimo)
+        VALUES ('Arroz Diana 10k', 'canasta_basica', 10000.0, 8000.0, 100, 10)
+    """)
+    p_canasta = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO productos (nombre, categoria, precio_venta, costo, stock, stock_minimo)
+        VALUES ('Chicle 1', 'consumo_suntuario', 100.0, 50.0, 100, 10)
+    """)
+    p_sunt1 = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO productos (nombre, categoria, precio_venta, costo, stock, stock_minimo)
+        VALUES ('Chicle 2', 'consumo_suntuario', 100.0, 50.0, 100, 10)
+    """)
+    p_sunt2 = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO productos (nombre, categoria, precio_venta, costo, stock, stock_minimo)
+        VALUES ('Chicle 3', 'consumo_suntuario', 100.0, 50.0, 100, 10)
+    """)
+    p_sunt3 = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total, monto_pagado, fecha_venta)
+        VALUES (1, ?, 'efectivo', 10300.0, 10300.0, datetime('now'))
+    """, (cid,))
+    vid = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+        VALUES (?, ?, 'Arroz', 1.0, 10000.0, 10000.0)
+    """, (vid, p_canasta))
+
+    cursor.execute("""
+        INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+        VALUES (?, ?, 'Chicle 1', 1.0, 100.0, 100.0)
+    """, (vid, p_sunt1))
+
+    cursor.execute("""
+        INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+        VALUES (?, ?, 'Chicle 2', 1.0, 100.0, 100.0)
+    """, (vid, p_sunt2))
+
+    cursor.execute("""
+        INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+        VALUES (?, ?, 'Chicle 3', 1.0, 100.0, 100.0)
+    """, (vid, p_sunt3))
+
+    db_conn.commit()
+
+    sw2 = calcular_sw2(cid, db_conn)
+    assert sw2 == 55.0
+
+
+
 
 

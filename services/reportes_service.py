@@ -9,6 +9,7 @@ from reportlab.pdfgen import canvas
 
 import services.scoring_service as scoring_service
 from services.scoring_service import clasificar_banda_mora
+from services.fechas import a_hora_local
 
 
 def obtener_arqueo_diario(
@@ -54,7 +55,7 @@ def obtener_arqueo_diario(
         FROM ventas v
         LEFT JOIN clientes c ON v.cliente_id = c.id
         LEFT JOIN usuarios u ON v.usuario_id = u.id
-        WHERE strftime('%Y-%m-%d', v.fecha_venta) = ?
+        WHERE strftime('%Y-%m-%d', v.fecha_venta, 'localtime') = ?
         ORDER BY v.fecha_venta ASC, v.id ASC
         """,
         (fecha_str,),
@@ -80,7 +81,7 @@ def obtener_arqueo_diario(
             ventas_efectivo += v_total
             movimientos.append({
                 "id": f"VENTA-{v_id}",
-                "hora": v_fecha,
+                "hora": a_hora_local(v_fecha),
                 "tipo": "Venta Contado (Efectivo)",
                 "metodo": "efectivo",
                 "monto": round(v_total, 2),
@@ -92,7 +93,7 @@ def obtener_arqueo_diario(
             ventas_nequi += v_total
             movimientos.append({
                 "id": f"VENTA-{v_id}",
-                "hora": v_fecha,
+                "hora": a_hora_local(v_fecha),
                 "tipo": "Venta Contado (Nequi/Transf.)",
                 "metodo": "nequi",
                 "monto": round(v_total, 2),
@@ -114,7 +115,7 @@ def obtener_arqueo_diario(
 
             movimientos.append({
                 "id": f"VENTA-{v_id}",
-                "hora": v_fecha,
+                "hora": a_hora_local(v_fecha),
                 "tipo": "Venta a Crédito (Fiado)",
                 "metodo": "credito",
                 "monto": round(v_total, 2),
@@ -131,7 +132,7 @@ def obtener_arqueo_diario(
         FROM cuentas_por_cobrar cxc
         LEFT JOIN clientes c ON cxc.cliente_id = c.id
         WHERE cxc.tipo_movimiento = 'abono'
-          AND strftime('%Y-%m-%d', cxc.fecha_movimiento) = ?
+          AND strftime('%Y-%m-%d', cxc.fecha_movimiento, 'localtime') = ?
         ORDER BY cxc.fecha_movimiento ASC, cxc.id ASC
         """,
         (fecha_str,),
@@ -148,7 +149,7 @@ def obtener_arqueo_diario(
 
         movimientos.append({
             "id": f"ABONO-{a_id}",
-            "hora": a_fecha,
+            "hora": a_hora_local(a_fecha),
             "tipo": "Abono Cartera CxC",
             "metodo": "efectivo",
             "monto": round(a_monto, 2),
@@ -351,7 +352,7 @@ def generar_comprobante_pdf(
     cliente = row["cliente_nombre"] or "Cliente General"
     telefono = row["cliente_telefono"] or "No registrado"
     descripcion = row["descripcion"] or ("Abono de cartera" if tipo == "abono" else "Venta a crédito")
-    fecha_mov = row["fecha_movimiento"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fecha_mov = a_hora_local(row["fecha_movimiento"]) if row["fecha_movimiento"] else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Ruta de destino
     if ruta_salida is None:

@@ -173,7 +173,7 @@ def calcular_sw1(cliente_id: int, conn: sqlite3.Connection) -> float:
 def calcular_sw2(cliente_id: int, conn: sqlite3.Connection) -> float:
     """
     Calcula SW2: Frecuencia y Volumetría de Compra (Peso W2 = 35%).
-    SW2 = 0.50 * V2.1 (frecuencia mensual) + 0.50 * V2.2 (categorías de producto).
+    SW2 = 0.50 * V2.1 (frecuencia mensual) + 0.50 * V2.2 (dominancia por valor comprado (Matriz v2 §4)).
     Devuelve un valor flotante en la escala 0 - 100.
     """
     cursor = conn.cursor()
@@ -199,9 +199,9 @@ def calcular_sw2(cliente_id: int, conn: sqlite3.Connection) -> float:
     else:
         v2_1 = 0.0
 
-    # V2.2: Predominancia de tipos de producto adquiridos
+    # V2.2: Predominancia de tipos de producto adquiridos por valor comprado (Matriz v2 §4)
     cursor.execute("""
-        SELECT p.categoria, COUNT(*) AS cantidad
+        SELECT p.categoria, SUM(vd.subtotal) AS valor
         FROM ventas v
         JOIN venta_detalle vd ON v.id = vd.venta_id
         JOIN productos p ON vd.producto_id = p.id
@@ -213,17 +213,20 @@ def calcular_sw2(cliente_id: int, conn: sqlite3.Connection) -> float:
     if not cat_rows:
         v2_2 = 60.0  # Valor base neutral si no hay detalle aún
     else:
-        conteo = {row["categoria"]: row["cantidad"] for row in cat_rows}
-        total_items = sum(conteo.values())
-        basica = conteo.get("canasta_basica", 0)
-        suntuario = conteo.get("consumo_suntuario", 0)
-        
-        if (basica / total_items) >= 0.60:
-            v2_2 = 100.0
-        elif (suntuario / total_items) >= 0.50:
-            v2_2 = 20.0
-        else:
+        valores = {row["categoria"]: float(row["valor"] or 0.0) for row in cat_rows}
+        total_valor = sum(valores.values())
+        if total_valor <= 0:
             v2_2 = 60.0
+        else:
+            basica = valores.get("canasta_basica", 0.0)
+            suntuario = valores.get("consumo_suntuario", 0.0)
+            
+            if (basica / total_valor) >= 0.60:
+                v2_2 = 100.0
+            elif (suntuario / total_valor) >= 0.50:
+                v2_2 = 20.0
+            else:
+                v2_2 = 60.0
 
     sw2 = 0.50 * v2_1 + 0.50 * v2_2
     return round(sw2, 2)

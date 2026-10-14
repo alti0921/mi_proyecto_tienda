@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from models.cliente import Cliente
 from services import cxc_service, pos_service, reportes_service, scoring_service
+from services.fechas import a_hora_local
 from ui.estilos import (
     COLOR_ALERTA_BG,
     COLOR_ALERTA_BORDE,
@@ -693,7 +694,7 @@ class PantallaPerfilCliente(tk.Frame):
                 iid=str(m.id),
                 values=(
                     m.id,
-                    m.fecha_movimiento or "--",
+                    a_hora_local(m.fecha_movimiento),
                     tipo_fmt,
                     f"${m.monto:,.2f}",
                     f"${m.saldo_resultante:,.2f}",

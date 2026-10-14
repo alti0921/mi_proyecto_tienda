@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import pytest
-from datetime import date
+from datetime import date, datetime, timezone
 
 from services.reportes_service import (
     obtener_arqueo_diario,
@@ -359,3 +359,46 @@ def test_consolidado_cartera_fifo_y_clase_final(db_conn, crear_cliente_score_alt
             assert d["clase_riesgo"] in ("C", "D")
         elif d["banda"] == "critica_mas_10":
             assert d["clase_riesgo"] == "D"
+
+
+def test_arqueo_agrupa_por_dia_local(db_conn):
+    """Verifica que el arqueo agrupe por día según hora local y muestre hora local."""
+    dt_local = datetime(2026, 10, 13, 20, 0, 0)
+    dt_utc = dt_local.astimezone(timezone.utc)
+    fecha_utc_txt = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, nivel_vinculo)
+        VALUES ('Cliente Test Arqueo Local', 50000.0, 7000.0, 70, 'B', 'conocido_referido')
+    """)
+    cid = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO ventas (usuario_id, cliente_id, tipo_pago, total, monto_pagado, fecha_venta)
+        VALUES (1, ?, 'efectivo', 5000.0, 5000.0, ?)
+    """, (cid, fecha_utc_txt))
+    vid = cursor.lastrowid
+
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, venta_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento, descripcion, usuario_id)
+        VALUES (?, ?, 'cargo', 10000.0, 10000.0, ?, 'Cargo inicial credito', 1)
+    """, (cid, vid, fecha_utc_txt))
+
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento, descripcion, usuario_id)
+        VALUES (?, 'abono', 3000.0, 7000.0, ?, 'Abono en caja', 1)
+    """, (cid, fecha_utc_txt))
+    db_conn.commit()
+
+    arqueo_13 = obtener_arqueo_diario("2026-10-13", conn=db_conn)
+    assert arqueo_13["ventas_efectivo"] == 5000.0
+    assert arqueo_13["abonos_cxc"] == 3000.0
+    assert len(arqueo_13["movimientos"]) == 2
+    for m in arqueo_13["movimientos"]:
+        assert m["hora"] == "2026-10-13 20:00:00"
+
+    arqueo_14 = obtener_arqueo_diario("2026-10-14", conn=db_conn)
+    assert arqueo_14["ventas_efectivo"] == 0.0
+    assert arqueo_14["abonos_cxc"] == 0.0
+
