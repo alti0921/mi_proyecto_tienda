@@ -104,7 +104,7 @@ class PantallaPOS(tk.Frame):
         self.entry_busqueda_prod = ttk.Entry(frame_busqueda, width=28)
         self.entry_busqueda_prod.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         self.entry_busqueda_prod.bind("<KeyRelease>", lambda e: self._filtrar_productos())
-        self.entry_busqueda_prod.bind("<Return>", lambda e: self._filtrar_productos())
+        self.entry_busqueda_prod.bind("<Return>", lambda e: self._on_enter_busqueda())
 
         btn_buscar = ttk.Button(
             frame_busqueda, text="Buscar", command=self._filtrar_productos
@@ -505,6 +505,37 @@ class PantallaPOS(tk.Frame):
     # LÓGICA DEL CARRITO (EN MEMORIA)
     # =========================================================================
 
+    def _agregar_producto_al_carrito(self, producto: Producto) -> None:
+        """Helper privado para agregar un producto catalogado al carrito con la cantidad del spinbox."""
+        try:
+            cant = float(self.spin_cant_agregar.get() or 1)
+            if cant <= 0:
+                raise ValueError()
+        except ValueError:
+            self.area_error.mostrar_error("La cantidad a agregar debe ser un número mayor a cero.")
+            return
+
+        # Verificar si ya existe en el carrito para sumar cantidad
+        existente = next((it for it in self._carrito if it.get("producto_id") == producto.id), None)
+        if existente:
+            existente["cantidad"] += cant
+            existente["subtotal"] = round(existente["cantidad"] * existente["precio_unitario"], 2)
+        else:
+            self._carrito.append(
+                {
+                    "producto_id": producto.id,
+                    "descripcion": producto.nombre,
+                    "precio_unitario": producto.precio_venta,
+                    "cantidad": cant,
+                    "subtotal": round(cant * producto.precio_venta, 2),
+                    "stock_disponible": producto.stock,
+                }
+            )
+
+        self.area_error.limpiar()
+        self._refrescar_carrito_visual()
+        self.spin_cant_agregar.set(1)
+
     def _agregar_producto_seleccionado(self) -> None:
         """Agrega el producto seleccionado en el catálogo al carrito en memoria."""
         seleccion = self.tree_catalogo.selection()
@@ -522,34 +553,44 @@ class PantallaPOS(tk.Frame):
         if not producto:
             return
 
-        try:
-            cant = float(self.spin_cant_agregar.get() or 1)
-            if cant <= 0:
-                raise ValueError()
-        except ValueError:
-            self.area_error.mostrar_error("La cantidad a agregar debe ser un número mayor a cero.")
+        self._agregar_producto_al_carrito(producto)
+
+    def _on_enter_busqueda(self, event=None) -> None:
+        """
+        Maneja la acción de presionar Enter en el campo de búsqueda de productos (RF-POS-01).
+        Permite escanear código de barras o ingresar nombre exacto y agregar al carrito en una sola interacción.
+        """
+        termino = self.entry_busqueda_prod.get().strip()
+        if not termino:
             return
 
-        # Verificar si ya existe en el carrito para sumar cantidad
-        existente = next((it for it in self._carrito if it.get("producto_id") == prod_id), None)
-        if existente:
-            existente["cantidad"] += cant
-            existente["subtotal"] = round(existente["cantidad"] * existente["precio_unitario"], 2)
-        else:
-            self._carrito.append(
-                {
-                    "producto_id": prod_id,
-                    "descripcion": producto.nombre,
-                    "precio_unitario": producto.precio_venta,
-                    "cantidad": cant,
-                    "subtotal": round(cant * producto.precio_venta, 2),
-                    "stock_disponible": producto.stock,
-                }
-            )
+        producto: Optional[Producto] = None
 
-        self.area_error.limpiar()
-        self._refrescar_carrito_visual()
-        self.spin_cant_agregar.set(1)
+        # 1. Coincidencia exacta de código de barras
+        prod_codigo = inventario_service.obtener_producto_por_codigo(termino, self.sesion.conn)
+        if prod_codigo and prod_codigo.activo:
+            producto = prod_codigo
+        else:
+            # 2. Búsqueda por término (nombre o código parcial)
+            resultados = inventario_service.buscar_productos(
+                termino, self.sesion.conn, solo_activos=True
+            )
+            if len(resultados) == 1:
+                producto = resultados[0]
+            elif len(resultados) == 0:
+                self.area_error.mostrar_error(f"No se encontró ningún producto con «{termino}».")
+                return
+            else:
+                # 2 o más resultados: solo filtra el catálogo visualmente
+                self._refrescar_catalogo(termino)
+                return
+
+        # 3. Si hay producto identificado
+        if producto:
+            self._agregar_producto_al_carrito(producto)
+            self.entry_busqueda_prod.delete(0, tk.END)
+            self._refrescar_catalogo()
+            self.entry_busqueda_prod.focus_set()
 
     def _agregar_monto_global(self) -> None:
         """Agrega un ítem sin catalogar al carrito (producto_id=None) (RF-POS-02)."""

@@ -629,3 +629,62 @@ def registrar_snapshot(
         categoria_nueva=cat_nueva,
         motivo=motivo
     )
+
+
+def calcular_sugerencia_cupo(cliente_id: int, conn: sqlite3.Connection) -> Dict[str, Any]:
+    """
+    Calcula la sugerencia de cupo y plazo para un cliente (RF-SCR-05).
+    Operación estrictamente de solo lectura: NUNCA escribe en la base de datos.
+    Usa evaluar_cliente como única fuente de evaluación y reglas de veto.
+    """
+    ev = evaluar_cliente(cliente_id, conn)
+
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT limite_credito, plazo_pactado_dias FROM clientes WHERE id = ?",
+        (cliente_id,),
+    )
+    row = cursor.fetchone()
+    limite_actual = float(row["limite_credito"]) if row and row["limite_credito"] is not None else 0.0
+    plazo_actual = int(row["plazo_pactado_dias"]) if row and row["plazo_pactado_dias"] is not None else obtener_plazo_pactado(cliente_id, conn)
+
+    if ev.get("es_cold_start"):
+        cs = ev.get("cold_start") or {}
+        cupo_semilla = float(cs.get("cupo_semilla", 30000.0))
+        plazo_cs = int(cs.get("plazo_dias", plazo_actual))
+        texto = (
+            f"💡 Sugerencia Cold-Start (arranque en frío): cupo semilla de ${cupo_semilla:,.0f} COP "
+            f"con plazo pactado de {plazo_cs} días. Requiere confirmación del administrador."
+        )
+        return {
+            "tipo": "cold_start",
+            "cupo_sugerido": cupo_semilla,
+            "plazo_dias": plazo_cs,
+            "texto": texto,
+        }
+
+    clase_final = ev.get("clase_final")
+    decision = ev.get("decision") or decision_por_clase(clase_final)
+    factor_cupo = decision.get("factor_cupo", 1.0)
+
+    if clase_final == "A" and limite_actual > 0:
+        cupo_sugerido = round(limite_actual * factor_cupo, 2)
+        texto = (
+            f"💡 Clase A: se sugiere aumentar el cupo hasta un 20 % "
+            f"(de ${limite_actual:,.2f} a ${cupo_sugerido:,.2f} COP). "
+            f"Solo se aplica si el administrador lo confirma."
+        )
+        return {
+            "tipo": "incremento_clase_a",
+            "cupo_sugerido": cupo_sugerido,
+            "plazo_dias": plazo_actual,
+            "texto": texto,
+        }
+
+    return {
+        "tipo": None,
+        "cupo_sugerido": limite_actual,
+        "plazo_dias": plazo_actual,
+        "texto": f"💡 Sin sugerencia de cambio de cupo para la clase {clase_final}.",
+    }
+

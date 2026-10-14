@@ -630,38 +630,15 @@ class PantallaPerfilCliente(tk.Frame):
         # 4. Cargar Historial CxC Append-Only
         self._cargar_historial_cxc(cliente_id)
 
-        # 5. Sugerencia Cold-Start en campo de cupo
-        cold_start = scoring_service.evaluar_cold_start(cliente_id, self.sesion.conn)
-        if cold_start.get("es_cold_start"):
-            cupo_sug = cold_start.get("cupo_semilla", 40000.0)
-            self.lbl_sugerencia_cupo.config(
-                text=f"💡 Sugerencia Cold-Start (Protocolo Semilla): ${cupo_sug:,.2f} COP "
-                f"({cold_start['decision']['accion']})"
-            )
-            self.entry_nuevo_cupo.delete(0, tk.END)
-            self.entry_nuevo_cupo.insert(0, f"{cupo_sug:.2f}")
-            if cold_start.get("plazo_dias") == 15:
-                self.combo_plazo.set("15 días (quincenal)")
-            else:
-                self.combo_plazo.set("8 días (semanal)")
+        # 5. Sugerencia de cupo y plazo (RF-SCR-05)
+        sug = scoring_service.calcular_sugerencia_cupo(cliente_id, self.sesion.conn)
+        self.lbl_sugerencia_cupo.config(text=sug["texto"])
+        self.entry_nuevo_cupo.delete(0, tk.END)
+        self.entry_nuevo_cupo.insert(0, f"{sug['cupo_sugerido']:.2f}")
+        if sug.get("plazo_dias") == 15:
+            self.combo_plazo.set("15 días (quincenal)")
         else:
-            if "ciclos_completados" in cold_start:
-                ciclos = cold_start.get("ciclos_completados", 3)
-                txt_historial = (
-                    f"💡 Cliente con historial: {ciclos} o más ciclos de pago oportunos; "
-                    f"se evalúa con el puntaje completo."
-                )
-            else:
-                txt_historial = "💡 Cliente fuera del arranque en frío por mora; se evalúa con el puntaje completo."
-
-            self.lbl_sugerencia_cupo.config(text=txt_historial)
-            self.entry_nuevo_cupo.delete(0, tk.END)
-            self.entry_nuevo_cupo.insert(0, f"{cliente.limite_credito:.2f}")
-
-            if cliente.plazo_pactado_dias == 15:
-                self.combo_plazo.set("15 días (quincenal)")
-            else:
-                self.combo_plazo.set("8 días (semanal)")
+            self.combo_plazo.set("8 días (semanal)")
 
 
     def _actualizar_scoring_visual(self, cliente_id: int) -> None:

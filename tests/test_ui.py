@@ -1638,6 +1638,179 @@ def test_perfil_historial_muestra_no_registrado(ui_app):
     _login_como(ui_app, "admin", "admin123")
 
 
+def test_perfil_sugerencia_20_pct_solo_se_aplica_al_confirmar(ui_app, crear_cliente_score_alto):
+    """
+    Verifica que la sugerencia de aumento de cupo (+20%) para clientes Clase A
+    se muestre de manera informativa y solo se aplique a la BD cuando el administrador confirma.
+    """
+    conn = ui_app.sesion.conn
+    cid = crear_cliente_score_alto(conn)
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cid)
+
+    assert "20 %" in cxc_frame.lbl_sugerencia_cupo.cget("text")
+    assert cxc_frame.entry_nuevo_cupo.get() == "600000.00"
+
+    # Verificar que en BD sigue en 500.000 antes de confirmar
+    cur = conn.cursor()
+    cur.execute("SELECT limite_credito FROM clientes WHERE id = ?", (cid,))
+    assert cur.fetchone()["limite_credito"] == 500000.0
+
+    # Confirmar cupo
+    cxc_frame._asignar_cupo()
+    cur.execute("SELECT limite_credito FROM clientes WHERE id = ?", (cid,))
+    assert cur.fetchone()["limite_credito"] == 600000.0
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_pos_enter_con_codigo_exacto_agrega(ui_app):
+    """
+    Verifica que al presionar Enter con un código de barras exacto, el producto
+    se agregue directamente al carrito en una sola interacción (RF-POS-01).
+    """
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+    pos_frame: PantallaPOS = ui_app.pantallas["pos"]
+    pos_frame._vaciar_carrito()
+
+    pos_frame.entry_busqueda_prod.delete(0, tk.END)
+    pos_frame.entry_busqueda_prod.insert(0, "7501000100011")
+    pos_frame._on_enter_busqueda()
+
+    assert len(pos_frame._carrito) == 1
+    assert pos_frame._carrito[0]["descripcion"] == "Arroz Superior 1kg"
+    assert pos_frame.entry_busqueda_prod.get() == ""
+    assert len(pos_frame.tree_catalogo.get_children()) >= 3
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_pos_enter_con_nombre_unico_agrega(ui_app):
+    """
+    Verifica que al ingresar el nombre exacto de un producto con resultado único
+    y presionar Enter, se agregue al carrito directamente.
+    """
+    conn = ui_app.sesion.conn
+    prod = inventario_service.crear_producto(
+        nombre="Panela Unica Test 7",
+        categoria="canasta_basica",
+        precio_venta=3500.0,
+        costo=2500.0,
+        conn=conn,
+        stock=20,
+    )
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+    pos_frame: PantallaPOS = ui_app.pantallas["pos"]
+    pos_frame._vaciar_carrito()
+
+    pos_frame.entry_busqueda_prod.delete(0, tk.END)
+    pos_frame.entry_busqueda_prod.insert(0, "Panela Unica Test 7")
+    pos_frame._on_enter_busqueda()
+
+    assert len(pos_frame._carrito) == 1
+    assert pos_frame._carrito[0]["producto_id"] == prod.id
+    assert pos_frame._carrito[0]["descripcion"] == "Panela Unica Test 7"
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_pos_enter_con_varios_resultados_solo_filtra(ui_app):
+    """
+    Verifica que si la búsqueda arroja 2 o más resultados coincidentes, Enter
+    solamente filtre el catálogo visual sin agregar ítems al carrito.
+    """
+    conn = ui_app.sesion.conn
+    inventario_service.crear_producto(
+        nombre="Galleta Test Siete Uno",
+        categoria="canasta_basica",
+        precio_venta=1200.0,
+        costo=800.0,
+        conn=conn,
+        stock=15,
+    )
+    inventario_service.crear_producto(
+        nombre="Galleta Test Siete Dos",
+        categoria="canasta_basica",
+        precio_venta=1500.0,
+        costo=1000.0,
+        conn=conn,
+        stock=15,
+    )
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+    pos_frame: PantallaPOS = ui_app.pantallas["pos"]
+    pos_frame._vaciar_carrito()
+    carrito_antes = len(pos_frame._carrito)
+
+    pos_frame.entry_busqueda_prod.delete(0, tk.END)
+    pos_frame.entry_busqueda_prod.insert(0, "Galleta Test Siete")
+    pos_frame._on_enter_busqueda()
+
+    assert len(pos_frame._carrito) == carrito_antes
+    assert len(pos_frame.tree_catalogo.get_children()) == 2
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_pos_enter_sin_resultados_muestra_error(ui_app):
+    """
+    Verifica que al no encontrar ningún producto coincidente con el término,
+    se muestre el mensaje de error en AreaError y el carrito permanezca intacto.
+    """
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+    pos_frame: PantallaPOS = ui_app.pantallas["pos"]
+    pos_frame._vaciar_carrito()
+    carrito_antes = len(pos_frame._carrito)
+
+    pos_frame.entry_busqueda_prod.delete(0, tk.END)
+    pos_frame.entry_busqueda_prod.insert(0, "zzz_no_existe")
+    pos_frame._on_enter_busqueda()
+
+    assert len(pos_frame._carrito) == carrito_antes
+    assert pos_frame.area_error.tiene_error() is True
+    assert "No se encontró" in pos_frame.area_error._mensaje_actual
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_pos_enter_codigo_de_producto_inactivo_no_agrega(ui_app):
+    """
+    Verifica que el código de barras de un producto inactivo no permita agregarlo al carrito.
+    """
+    conn = ui_app.sesion.conn
+    codigo_inactivo = "9998887770001"
+    prod = inventario_service.crear_producto(
+        nombre="Producto Inactivo Barcode",
+        categoria="canasta_basica",
+        precio_venta=2000.0,
+        costo=1500.0,
+        codigo_barras=codigo_inactivo,
+        conn=conn,
+        stock=10,
+    )
+    inventario_service.desactivar_producto(prod.id, conn)
+
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+    pos_frame: PantallaPOS = ui_app.pantallas["pos"]
+    pos_frame._vaciar_carrito()
+    carrito_antes = len(pos_frame._carrito)
+
+    pos_frame.entry_busqueda_prod.delete(0, tk.END)
+    pos_frame.entry_busqueda_prod.insert(0, codigo_inactivo)
+    pos_frame._on_enter_busqueda()
+
+    assert len(pos_frame._carrito) == carrito_antes
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+
 
 
 

@@ -14,6 +14,7 @@ from services import (
     aplicar_reglas_veto,
     decision_por_clase,
     evaluar_cliente,
+    calcular_sugerencia_cupo,
 )
 
 def test_cliente_al_dia_riesgo_bajo(db_conn):
@@ -889,6 +890,62 @@ def test_cold_start_no_persiste_cupo(db_conn):
     cursor.execute("SELECT limite_credito FROM clientes WHERE id = ?", (cid,))
     row = cursor.fetchone()
     assert row["limite_credito"] == 0.0
+
+
+def test_sugerencia_cupo_clase_a_incremento_sin_persistir(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que para clientes en Clase A con cupo > 0, se sugiera un incremento
+    del 20% sin modificar el límite de crédito en la base de datos (RF-SCR-05).
+    """
+    cid = crear_cliente_score_alto(db_conn)  # sin mora -> S=100, Clase A, límite 500.000
+    sug = calcular_sugerencia_cupo(cid, db_conn)
+
+    assert sug["tipo"] == "incremento_clase_a"
+    assert sug["cupo_sugerido"] == 600000.0
+    assert "20 %" in sug["texto"]
+
+    # Verificar que el límite de crédito en BD permanece intacto
+    cur = db_conn.cursor()
+    cur.execute("SELECT limite_credito FROM clientes WHERE id = ?", (cid,))
+    assert cur.fetchone()["limite_credito"] == 500000.0
+
+
+def test_sugerencia_cupo_sin_incremento_para_b_c_d(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que para clientes con riesgo B, C o D no se sugiera incremento
+    y se mantenga el cupo actual sin cambios.
+    """
+    # Cliente con 16 días de mora -> Veto R1 -> Clase C
+    cid_c = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+    sug_c = calcular_sugerencia_cupo(cid_c, db_conn)
+    assert sug_c["tipo"] is None
+    assert sug_c["cupo_sugerido"] == 500000.0
+    assert "clase C" in sug_c["texto"]
+
+    # Cliente con 19 días de mora -> Veto R2 -> Clase D
+    cid_d = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=19)
+    sug_d = calcular_sugerencia_cupo(cid_d, db_conn)
+    assert sug_d["tipo"] is None
+    assert sug_d["cupo_sugerido"] == 500000.0
+    assert "clase D" in sug_d["texto"]
+
+
+def test_sugerencia_cupo_cold_start(db_conn):
+    """
+    Verifica que para clientes en Cold-Start se sugiera el cupo semilla correspondiente
+    y el plazo pactado sin mutar la base de datos.
+    """
+    from services.cxc_service import crear_cliente
+    cli = crear_cliente(
+        nombre="Nuevo Cold Start Sugerencia",
+        nivel_vinculo="registro_completo",
+        conn=db_conn,
+    )
+    sug = calcular_sugerencia_cupo(cli.id, db_conn)
+    assert sug["tipo"] == "cold_start"
+    assert sug["cupo_sugerido"] == 50000.0
+    assert sug["plazo_dias"] == 8
+
 
 
 

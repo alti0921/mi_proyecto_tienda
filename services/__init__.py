@@ -13,6 +13,7 @@ from services.scoring_service import (
     evaluar_cliente,
     clasificar_banda_mora,
     obtener_plazo_pactado,
+    calcular_sugerencia_cupo,
     PLAZO_POR_DEFECTO_DIAS,
     PLAZOS_PACTADOS_VALIDOS,
 )
@@ -108,6 +109,7 @@ __all__ = [
     "obtener_consolidado_cartera",
     "clasificar_banda_mora",
     "obtener_plazo_pactado",
+    "calcular_sugerencia_cupo",
     "PLAZO_POR_DEFECTO_DIAS",
     "PLAZOS_PACTADOS_VALIDOS",
 ]
