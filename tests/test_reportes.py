@@ -8,11 +8,14 @@ from services.reportes_service import (
     obtener_consolidado_cartera,
     clasificar_banda_mora,
     generar_comprobante_pdf,
+    ENCABEZADO_COMPROBANTE,
+    _lineas_pie_comprobante,
+    _partir_texto,
 )
 from services.pos_service import registrar_venta, asignar_limite_credito, LineaVentaInput
 from services.cxc_service import crear_cliente, registrar_abono, registrar_cargo
 from services.inventario_service import crear_producto
-from services.auth_service import obtener_usuario_por_username
+from services.auth_service import obtener_usuario_por_username, crear_usuario
 
 
 def test_clasificar_banda_mora():
@@ -401,4 +404,73 @@ def test_arqueo_agrupa_por_dia_local(db_conn):
     arqueo_14 = obtener_arqueo_diario("2026-10-14", conn=db_conn)
     assert arqueo_14["ventas_efectivo"] == 0.0
     assert arqueo_14["abonos_cxc"] == 0.0
+
+
+def test_comprobante_encabezado_y_pie():
+    """
+    Verifica que ENCABEZADO_COMPROBANTE sea exacto y que el pie diferencie abono vs cargo.
+    """
+    assert ENCABEZADO_COMPROBANTE == "Mi Tienda — Sistema POS & Scoring"
+
+    pie_abono = _lineas_pie_comprobante("abono")
+    assert any("¡Gracias" in linea for linea in pie_abono)
+    assert any("Conserve este soporte" in linea for linea in pie_abono)
+
+    pie_cargo = _lineas_pie_comprobante("cargo")
+    assert not any("Gracias" in linea for linea in pie_cargo)
+    assert any("Conserve este soporte" in linea for linea in pie_cargo)
+
+
+def test_partir_texto_sin_truncar():
+    """
+    Verifica que _partir_texto no recorte con '..' y preserve todas las palabras.
+    """
+    assert _partir_texto("Ana", "Helvetica", 8, 100) == ["Ana"]
+
+    nombre_largo = "Juan Carlos de la Santísima Trinidad Rodríguez Pérez González"
+    lineas = _partir_texto(nombre_largo, "Helvetica", 8, 120)
+    assert len(lineas) > 1
+    assert all(not l.endswith("..") for l in lineas)
+    assert " ".join(lineas) == nombre_largo
+
+
+def test_comprobante_pdf_nombres_largos(db_conn, tmp_path):
+    """
+    Verifica generación de comprobantes PDF con nombres de cajero y cliente de ~60 caracteres,
+    tanto para cargo como para abono, sin alterar usuarios semilla.
+    """
+    cajero_nombre = "Cajero Especializado Con Nombre Extremadamente Largo 60 Chars"
+    cliente_nombre = "Cliente Deudor Con Nombre Extremadamente Largo Sesenta Chars"
+
+    # Crear usuario específico para la prueba sin tocar los existentes
+    cajero = crear_usuario("cajero_test_largo", "ClaveValida123*", cajero_nombre, conn=db_conn, rol="vendedor")
+    cliente = crear_cliente(nombre=cliente_nombre, limite_credito=200000.0, conn=db_conn)
+
+    cargo = registrar_cargo(
+        cliente_id=cliente.id,
+        monto=75000.0,
+        conn=db_conn,
+        descripcion="Cargo por venta a credito de mercancia variada",
+        usuario_id=cajero.id,
+    )
+    abono = registrar_abono(
+        cliente_id=cliente.id,
+        monto=25000.0,
+        conn=db_conn,
+        descripcion="Abono parcial de saldo en efectivo recibido",
+        usuario_id=cajero.id,
+    )
+
+    pdf_cargo = tmp_path / "comprobante_cargo_largo.pdf"
+    pdf_abono = tmp_path / "comprobante_abono_largo.pdf"
+
+    ruta_c = generar_comprobante_pdf(cargo.id, db_conn, ruta_salida=str(pdf_cargo))
+    ruta_a = generar_comprobante_pdf(abono.id, db_conn, ruta_salida=str(pdf_abono))
+
+    assert os.path.exists(ruta_c)
+    assert os.path.getsize(ruta_c) > 0
+
+    assert os.path.exists(ruta_a)
+    assert os.path.getsize(ruta_a) > 0
+
 

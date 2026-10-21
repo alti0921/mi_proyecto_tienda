@@ -6,4 +6,5 @@ entrega_*.txt
 diagnostico_*.txt
 db/*.bak-*
 scripts/resultados_rendimiento.csv
+capturas_diag/
 

@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from reportlab.lib.utils import simpleSplit
 
 import services.scoring_service as scoring_service
 from services.scoring_service import clasificar_banda_mora
@@ -289,6 +290,33 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
     }
 
 
+ENCABEZADO_COMPROBANTE = "Mi Tienda — Sistema POS & Scoring"
+
+
+def _lineas_pie_comprobante(tipo: str) -> list[str]:
+    """
+    Retorna las líneas de pie de página según el tipo de movimiento (cargo o abono).
+    """
+    if tipo == "abono":
+        return [
+            "¡Gracias por su pago oportuno y su confianza!",
+            "Conserve este soporte para cualquier aclaración.",
+        ]
+    return [
+        "Conserve este soporte para cualquier aclaración.",
+    ]
+
+
+def _partir_texto(texto: str, fuente: str, tamano: float, ancho_max: float) -> list[str]:
+    """
+    Parte un texto en múltiples líneas según el ancho máximo permitido,
+    sin truncar con elipsis ni perder palabras.
+    """
+    if not texto:
+        return []
+    return simpleSplit(str(texto), fuente, tamano, ancho_max)
+
+
 def generar_comprobante_pdf(
     movimiento_id: int,
     conn: sqlite3.Connection,
@@ -361,27 +389,43 @@ def generar_comprobante_pdf(
     else:
         ruta_salida = os.path.abspath(ruta_salida)
 
-    # Dimensiones térmicas: 80 mm de ancho (~226.77 pt), 160 mm de alto
+    # Dimensiones térmicas: 80 mm de ancho (~226.77 pt)
     w = 80 * mm
-    h = 160 * mm
-    c = canvas.Canvas(ruta_salida, pagesize=(w, h))
-
-    # Márgenes y coordenadas
     x_left = 6 * mm
     x_right = w - 6 * mm
     x_center = w / 2.0
-    y = h - 8 * mm
+    ancho_imprimible = x_right - x_left
 
-    # 1. Encabezado del micronegocio
-    c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(x_center, y, "MI TIENDA DE ABARROTES")
+    # Partir textos sin truncar (RF-CXC-04)
+    ancho_datos = ancho_imprimible - 18 * mm
+    cajero_lineas = _partir_texto(cajero, "Helvetica", 8, ancho_datos) or ["No registrado"]
+    cliente_lineas = _partir_texto(cliente, "Helvetica", 8, ancho_datos) or ["Cliente General"]
+    tel_lineas = _partir_texto(str(telefono), "Helvetica", 8, ancho_datos) or ["No registrado"]
+    desc_lineas = _partir_texto(descripcion, "Helvetica-Oblique", 7.5, ancho_imprimible) or [descripcion]
+    lineas_pie = _lineas_pie_comprobante(tipo)
+
+    # Cálculo dinámico del alto de página (mínimo 160 mm)
+    margen_sup = 8 * mm
+    margen_inf = 8 * mm
+    lineas_var_drop = (
+        len(cajero_lineas) * 3.5 +
+        len(cliente_lineas) * 3.5 +
+        len(tel_lineas) * 3.5 +
+        len(desc_lineas) * 3.2 +
+        len(lineas_pie) * 3.5 +
+        3.0
+    ) * mm
+
+    alto_calculado = 66 * mm + lineas_var_drop + margen_sup + margen_inf
+    h = max(160 * mm, alto_calculado)
+
+    c = canvas.Canvas(ruta_salida, pagesize=(w, h))
+    y = h - margen_sup
+
+    # 1. Encabezado del comprobante (una sola línea)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawCentredString(x_center, y, ENCABEZADO_COMPROBANTE)
     y -= 4 * mm
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(x_center, y, "Sistema POS & Scoring de Microtienda")
-    y -= 3.5 * mm
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(x_center, y, "NIT: 123456789-0 | Barranquilla, Atlántico")
-    y -= 3 * mm
 
     # Separador punteado
     c.setDash(2, 2)
@@ -401,34 +445,43 @@ def generar_comprobante_pdf(
     c.line(x_left, y, x_right, y)
     y -= 4 * mm
 
-    # 3. Datos del cajero y cliente
+    # 3. Datos del cajero y cliente (sin truncar)
     c.setFont("Helvetica", 8)
     c.drawString(x_left, y, "Cajero:")
-    cajero_trunc = (cajero[:22] + "..") if len(cajero) > 24 else cajero
-    c.drawRightString(x_right, y, cajero_trunc)
-    y -= 4 * mm
+    c.drawRightString(x_right, y, cajero_lineas[0])
+    y -= 3.5 * mm
+    for l in cajero_lineas[1:]:
+        c.drawRightString(x_right, y, l)
+        y -= 3.5 * mm
+    y -= 0.5 * mm
 
     c.drawString(x_left, y, "Cliente:")
-    cliente_trunc = (cliente[:22] + "..") if len(cliente) > 24 else cliente
-    c.drawRightString(x_right, y, cliente_trunc)
-    y -= 4 * mm
+    c.drawRightString(x_right, y, cliente_lineas[0])
+    y -= 3.5 * mm
+    for l in cliente_lineas[1:]:
+        c.drawRightString(x_right, y, l)
+        y -= 3.5 * mm
+    y -= 0.5 * mm
 
     c.drawString(x_left, y, "Teléfono:")
-    c.drawRightString(x_right, y, str(telefono)[:24])
-    y -= 3 * mm
+    c.drawRightString(x_right, y, tel_lineas[0])
+    y -= 3.5 * mm
+    for l in tel_lineas[1:]:
+        c.drawRightString(x_right, y, l)
+        y -= 3.5 * mm
 
     # Separador
     c.line(x_left, y, x_right, y)
     y -= 4 * mm
 
-    # 4. Concepto y Tipo de Movimiento
+    # 4. Concepto y Tipo de Movimiento (sin truncar descripción)
     c.setFont("Helvetica-Bold", 8.5)
     c.drawCentredString(x_center, y, concepto_titulo)
     y -= 3.5 * mm
     c.setFont("Helvetica-Oblique", 7.5)
-    desc_trunc = (descripcion[:32] + "..") if len(descripcion) > 34 else descripcion
-    c.drawCentredString(x_center, y, desc_trunc)
-    y -= 3 * mm
+    for l in desc_lineas:
+        c.drawCentredString(x_center, y, l)
+        y -= 3.2 * mm
 
     # Separador
     c.line(x_left, y, x_right, y)
@@ -456,12 +509,17 @@ def generar_comprobante_pdf(
     c.line(x_left, y, x_right, y)
     y -= 5 * mm
 
-    # 6. Pie de página
-    c.setFont("Helvetica-Oblique", 7)
-    c.drawCentredString(x_center, y, "¡Gracias por su pago oportuno y su confianza!")
-    y -= 3.5 * mm
-    c.setFont("Helvetica", 6.5)
-    c.drawCentredString(x_center, y, "Conserve este soporte para cualquier aclaración.")
+    # 6. Pie de página dinámico por tipo
+    for i, l in enumerate(lineas_pie):
+        if i == 0 and tipo == "abono":
+            c.setFont("Helvetica-Oblique", 7)
+        else:
+            c.setFont("Helvetica", 6.5)
+        pie_sublineas = _partir_texto(l, "Helvetica", 6.5, ancho_imprimible) or [l]
+        for subl in pie_sublineas:
+            c.drawCentredString(x_center, y, subl)
+            y -= 3.5 * mm
 
     c.save()
     return ruta_salida
+
