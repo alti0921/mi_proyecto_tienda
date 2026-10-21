@@ -38,6 +38,7 @@ from ui.estilos import (
 )
 from ui.sesion import SesionActual
 from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, DialogoNuevoCliente
+from ui.explicacion_scoring import explicar_clase
 
 
 class PantallaPerfilCliente(tk.Frame):
@@ -280,6 +281,17 @@ class PantallaPerfilCliente(tk.Frame):
             pady=4,
         )
         self.lbl_badge_clase.pack(side=tk.RIGHT)
+
+        self.lbl_explicacion_clase = tk.Label(
+            self.card_scoring,
+            text="",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_BLANCO,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+            justify=tk.LEFT,
+            wraplength=480,
+        )
+        self.lbl_explicacion_clase.pack(anchor="w", pady=(2, 2))
 
         self.lbl_decision_accion = tk.Label(
             self.card_scoring,
@@ -600,6 +612,7 @@ class PantallaPerfilCliente(tk.Frame):
         self._limpiar_mensajes()
         cliente = cxc_service.obtener_cliente(cliente_id, self.sesion.conn)
         if not cliente:
+            self.lbl_explicacion_clase.config(text="")
             return
 
         self._cliente_actual = cliente
@@ -679,6 +692,9 @@ class PantallaPerfilCliente(tk.Frame):
         )
         self.lbl_decision_accion.config(text=decision["accion"])
         self.lbl_factores.config(text=factores_txt)
+        self.lbl_explicacion_clase.config(
+            text=explicar_clase(ev, self.combo_vinculo.get() or None)
+        )
 
     def _cargar_historial_cxc(self, cliente_id: int) -> None:
         """Carga las transacciones append-only en la Treeview del historial."""
@@ -975,6 +991,8 @@ class PantallaPerfilCliente(tk.Frame):
             self.combo_clientes.current(indice_seleccionar)
             cliente_id = self._clientes_map[opciones[indice_seleccionar]]
             self._cargar_ficha_cliente(cliente_id)
+        else:
+            self.lbl_explicacion_clase.config(text="")
 
     def _filtrar_clientes(self) -> None:
         """Aplica el término de búsqueda de clientes."""

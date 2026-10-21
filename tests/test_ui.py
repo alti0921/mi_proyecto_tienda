@@ -1848,6 +1848,48 @@ def test_perfil_historial_muestra_hora_local(ui_app):
     _login_como(ui_app, "admin", "admin123")
 
 
+def test_perfil_muestra_explicacion_clase(ui_app, crear_cliente_score_alto):
+    """
+    Verifica que en el perfil de cliente se muestre la explicación de la clase en lbl_explicacion_clase
+    para clientes en cold-start, con veto R1 y en caso normal fuera de cold-start.
+    """
+    conn = ui_app.sesion.conn
+
+    # 1. Cliente nuevo en cold-start
+    cli_nuevo = cxc_service.crear_cliente(
+        nombre="Cliente Explicacion UI Cold",
+        nivel_vinculo="conocido_referido",
+        conn=conn,
+    )
+
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    cxc_frame._cargar_selector_clientes(mantener_id=cli_nuevo.id)
+
+    texto_nuevo = cxc_frame.lbl_explicacion_clase.cget("text")
+    assert texto_nuevo.startswith("Cliente nuevo")
+
+    # 2. Cliente con regla de veto R1
+    cid_veto = crear_cliente_score_alto(conn, dias_cargo_pendiente=16)
+    cxc_frame._cargar_selector_clientes(mantener_id=cid_veto)
+
+    texto_veto = cxc_frame.lbl_explicacion_clase.cget("text")
+    assert texto_veto.startswith("Clase C por regla R1")
+
+    # 3. Cliente sin veto y fuera de cold-start (cargo pendiente dentro del plazo: 2 días)
+    cid_normal = crear_cliente_score_alto(conn, dias_cargo_pendiente=2)
+    cxc_frame._cargar_selector_clientes(mantener_id=cid_normal)
+
+    texto_normal = cxc_frame.lbl_explicacion_clase.cget("text")
+    assert texto_normal.startswith("Clase ")
+    assert "puntaje" in texto_normal
+    assert "Cliente nuevo" not in texto_normal
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+
 
 
 
