@@ -63,10 +63,10 @@ class AreaError(tk.Frame):
             background=COLOR_ERROR_BG,
             foreground=COLOR_ERROR_TEXTO,
             font=FUENTE_BASE_BOLD,
-            wraplength=450,
             justify=tk.LEFT,
         )
         self.lbl_texto.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ajustar_wraplength(self.lbl_texto, margen_px=10)
 
         # Oculto por defecto
         self.limpiar()
@@ -332,7 +332,6 @@ class DialogoNuevoCliente(tk.Toplevel):
         self.al_crear = al_crear
 
         self.title("Registrar Nuevo Cliente")
-        self.geometry("420x360")
         try:
             self.transient(parent)
             self.grab_set()
@@ -360,7 +359,7 @@ class DialogoNuevoCliente(tk.Toplevel):
             background=COLOR_FONDO_APP,
             foreground=COLOR_TEXTO_PRINCIPAL,
         ).pack(anchor="w")
-        self.entry_nombre = ttk.Entry(frame, width=35)
+        self.entry_nombre = ttk.Entry(frame)
         self.entry_nombre.pack(fill=tk.X, pady=(2, 6))
 
         tk.Label(
@@ -370,7 +369,7 @@ class DialogoNuevoCliente(tk.Toplevel):
             background=COLOR_FONDO_APP,
             foreground=COLOR_TEXTO_PRINCIPAL,
         ).pack(anchor="w")
-        self.entry_telefono = ttk.Entry(frame, width=35)
+        self.entry_telefono = ttk.Entry(frame)
         self.entry_telefono.pack(fill=tk.X, pady=(2, 6))
 
         tk.Label(
@@ -380,7 +379,7 @@ class DialogoNuevoCliente(tk.Toplevel):
             background=COLOR_FONDO_APP,
             foreground=COLOR_TEXTO_PRINCIPAL,
         ).pack(anchor="w")
-        self.entry_direccion = ttk.Entry(frame, width=35)
+        self.entry_direccion = ttk.Entry(frame)
         self.entry_direccion.pack(fill=tk.X, pady=(2, 6))
 
         tk.Label(
@@ -413,6 +412,24 @@ class DialogoNuevoCliente(tk.Toplevel):
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.entry_nombre.focus_set()
+
+        # Ajuste dinámico al tamaño del contenido y centrado
+        self.update_idletasks()
+        req_w = max(px(380), self.winfo_reqwidth())
+        req_h = max(px(340), self.winfo_reqheight())
+        self.minsize(req_w, req_h)
+        try:
+            top = parent.winfo_toplevel()
+            ancho_p = top.winfo_width()
+            alto_p = top.winfo_height()
+            x_p = top.winfo_rootx()
+            y_p = top.winfo_rooty()
+            x = x_p + max(0, (ancho_p - req_w) // 2)
+            y = y_p + max(0, (alto_p - req_h) // 2)
+            self.geometry(f"{req_w}x{req_h}+{x}+{y}")
+        except Exception:
+            self.geometry(f"{req_w}x{req_h}")
+        self.resizable(True, True)
 
     def guardar(self) -> None:
         """

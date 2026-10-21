@@ -20,7 +20,12 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError
+from ui.widgets_comunes import (
+    AreaError,
+    ajustar_wraplength,
+    configurar_columnas,
+    agregar_scroll_horizontal,
+)
 
 
 class PantallaUsuarios(tk.Frame):
@@ -44,8 +49,8 @@ class PantallaUsuarios(tk.Frame):
         self.sesion = sesion
 
         self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=3)
-        self.grid_columnconfigure(1, weight=2)
+        self.grid_columnconfigure(0, weight=3, uniform="usr")
+        self.grid_columnconfigure(1, weight=2, uniform="usr")
 
         # Panel Izquierdo: Gestión de Usuarios (Exclusivo Administrador)
         self.panel_admin = tk.Frame(self, background=COLOR_FONDO_APP)
@@ -109,10 +114,19 @@ class PantallaUsuarios(tk.Frame):
         self.tree_usuarios.heading("rol", text="Rol")
         self.tree_usuarios.heading("estado", text="Estado")
 
-        self.tree_usuarios.column("usuario", width=120, anchor=tk.W)
-        self.tree_usuarios.column("nombre", width=180, anchor=tk.W)
-        self.tree_usuarios.column("rol", width=90, anchor=tk.CENTER)
-        self.tree_usuarios.column("estado", width=85, anchor=tk.CENTER)
+        configurar_columnas(
+            self.tree_usuarios,
+            {
+                "usuario": (110, 80),
+                "nombre": (160, 110),
+                "rol": (80, 60),
+                "estado": (80, 60),
+            },
+        )
+        self.tree_usuarios.column("usuario", anchor=tk.W)
+        self.tree_usuarios.column("nombre", anchor=tk.W)
+        self.tree_usuarios.column("rol", anchor=tk.CENTER)
+        self.tree_usuarios.column("estado", anchor=tk.CENTER)
 
         scroll_tree = ttk.Scrollbar(
             frame_tree, orient="vertical", command=self.tree_usuarios.yview
@@ -120,6 +134,9 @@ class PantallaUsuarios(tk.Frame):
         self.tree_usuarios.configure(yscrollcommand=scroll_tree.set)
         self.tree_usuarios.grid(row=0, column=0, sticky="nsew")
         scroll_tree.grid(row=0, column=1, sticky="ns")
+        self.scroll_h_usuarios = agregar_scroll_horizontal(
+            self.tree_usuarios, frame_tree, row=1, column=0
+        )
 
         self.tree_usuarios.bind("<<TreeviewSelect>>", self._on_usuario_seleccionado)
 
@@ -215,8 +232,10 @@ class PantallaUsuarios(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_EXITO,
             font=FUENTE_BASE_BOLD,
+            justify=tk.LEFT,
         )
-        self.lbl_exito_admin.grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        self.lbl_exito_admin.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_admin)
 
         self.btn_crear_usuario = ttk.Button(
             card_alta,
@@ -254,10 +273,10 @@ class PantallaUsuarios(tk.Frame):
             font=FUENTE_PEQUENA,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_MUTED,
-            wraplength=340,
             justify=tk.LEFT,
         )
-        lbl_desc_pw.pack(anchor="w", pady=(0, 10))
+        lbl_desc_pw.pack(fill=tk.X, anchor="w", pady=(0, 10))
+        ajustar_wraplength(lbl_desc_pw)
 
         # Campos
         tk.Label(
@@ -288,10 +307,10 @@ class PantallaUsuarios(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_EXITO,
             font=FUENTE_BASE_BOLD,
-            wraplength=340,
             justify=tk.LEFT,
         )
-        self.lbl_exito_mi_password.pack(anchor="w", pady=(2, 0))
+        self.lbl_exito_mi_password.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_mi_password)
 
         # Botón
         self.btn_cambiar_mi_password = ttk.Button(

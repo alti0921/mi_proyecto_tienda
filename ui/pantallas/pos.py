@@ -36,7 +36,14 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError, DialogoNuevoCliente
+from ui.widgets_comunes import (
+    AreaError,
+    DialogoNuevoCliente,
+    MarcoDesplazable,
+    ajustar_wraplength,
+    configurar_columnas,
+    agregar_scroll_horizontal,
+)
 
 
 class PantallaPOS(tk.Frame):
@@ -68,8 +75,8 @@ class PantallaPOS(tk.Frame):
 
         # 2. Layout principal: Dos columnas (Izquierda: Catálogo/Carrito, Derecha: Pago/Crédito)
         self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=6)
-        self.grid_columnconfigure(1, weight=4)
+        self.grid_columnconfigure(0, weight=6, uniform="pos")
+        self.grid_columnconfigure(1, weight=4, uniform="pos")
 
         self._crear_panel_izquierdo()
         self._crear_panel_derecho()
@@ -142,12 +149,23 @@ class PantallaPOS(tk.Frame):
         self.tree_catalogo.heading("precio", text="Precio Venta")
         self.tree_catalogo.heading("stock", text="Stock")
 
-        self.tree_catalogo.column("id", width=40, anchor=tk.CENTER)
-        self.tree_catalogo.column("codigo", width=100, anchor=tk.W)
-        self.tree_catalogo.column("nombre", width=180, anchor=tk.W)
-        self.tree_catalogo.column("categoria", width=110, anchor=tk.W)
-        self.tree_catalogo.column("precio", width=85, anchor=tk.E)
-        self.tree_catalogo.column("stock", width=60, anchor=tk.CENTER)
+        configurar_columnas(
+            self.tree_catalogo,
+            {
+                "id": (40, 30),
+                "codigo": (95, 75),
+                "nombre": (170, 110),
+                "categoria": (110, 80),
+                "precio": (85, 65),
+                "stock": (55, 45),
+            },
+        )
+        self.tree_catalogo.column("id", anchor=tk.CENTER)
+        self.tree_catalogo.column("codigo", anchor=tk.W)
+        self.tree_catalogo.column("nombre", anchor=tk.W)
+        self.tree_catalogo.column("categoria", anchor=tk.W)
+        self.tree_catalogo.column("precio", anchor=tk.E)
+        self.tree_catalogo.column("stock", anchor=tk.CENTER)
 
         scroll_cat = ttk.Scrollbar(
             frame_tree_cat, orient="vertical", command=self.tree_catalogo.yview
@@ -155,58 +173,64 @@ class PantallaPOS(tk.Frame):
         self.tree_catalogo.configure(yscrollcommand=scroll_cat.set)
         self.tree_catalogo.grid(row=0, column=0, sticky="nsew")
         scroll_cat.grid(row=0, column=1, sticky="ns")
+        self.scroll_h_catalogo_pos = agregar_scroll_horizontal(
+            self.tree_catalogo, frame_tree_cat, row=1, column=0
+        )
 
         self.tree_catalogo.bind("<Double-1>", lambda e: self._agregar_producto_seleccionado())
 
-        # Barra de acción del Catálogo y Venta Rápida por Monto
+        # Barra de acción del Catálogo y Venta Rápida por Monto en 2 líneas
         frame_acciones_cat = tk.Frame(panel_izq, background=COLOR_FONDO_APP)
         frame_acciones_cat.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        frame_acciones_cat.grid_columnconfigure(1, weight=1)
+        frame_acciones_cat.grid_columnconfigure(2, weight=2)
 
+        # Fila 0: Agregar seleccionado
         lbl_cant = tk.Label(
             frame_acciones_cat,
             text="Cant:",
             font=FUENTE_BASE_BOLD,
             background=COLOR_FONDO_APP,
         )
-        lbl_cant.pack(side=tk.LEFT, padx=(0, 4))
+        lbl_cant.grid(row=0, column=0, sticky="w", padx=(0, 4), pady=(0, 4))
 
         self.spin_cant_agregar = ttk.Spinbox(
             frame_acciones_cat, from_=1, to=999, width=4
         )
         self.spin_cant_agregar.set(1)
-        self.spin_cant_agregar.pack(side=tk.LEFT, padx=(0, 8))
+        self.spin_cant_agregar.grid(row=0, column=1, sticky="w", padx=(0, 8), pady=(0, 4))
 
-        btn_agregar_cat = ttk.Button(
+        self.btn_agregar_cat = ttk.Button(
             frame_acciones_cat,
             text="➕ Agregar al Carrito",
             command=self._agregar_producto_seleccionado,
         )
-        btn_agregar_cat.pack(side=tk.LEFT, padx=(0, 15))
+        self.btn_agregar_cat.grid(row=0, column=2, columnspan=2, sticky="w", pady=(0, 4))
 
-        # --- Separador / Sección Venta por Monto Global (RF-POS-02) ---
+        # Fila 1: Separador / Sección Venta por Monto Global (RF-POS-02)
         lbl_monto_directo = tk.Label(
             frame_acciones_cat,
-            text="| Venta Rápida $: ",
+            text="Venta Rápida $: ",
             font=FUENTE_BASE_BOLD,
             background=COLOR_FONDO_APP,
             foreground="#2980b9",
         )
-        lbl_monto_directo.pack(side=tk.LEFT, padx=(5, 2))
+        lbl_monto_directo.grid(row=1, column=0, sticky="w", padx=(0, 4))
 
-        self.entry_monto_directo = ttk.Entry(frame_acciones_cat, width=9)
-        self.entry_monto_directo.pack(side=tk.LEFT, padx=(0, 4))
+        self.entry_monto_directo = ttk.Entry(frame_acciones_cat)
+        self.entry_monto_directo.grid(row=1, column=1, sticky="ew", padx=(0, 4))
         self.entry_monto_directo.bind("<Return>", lambda e: self._agregar_monto_global())
 
-        self.entry_desc_directo = ttk.Entry(frame_acciones_cat, width=14)
+        self.entry_desc_directo = ttk.Entry(frame_acciones_cat)
         self.entry_desc_directo.insert(0, "Venta rápida")
-        self.entry_desc_directo.pack(side=tk.LEFT, padx=(0, 4))
+        self.entry_desc_directo.grid(row=1, column=2, sticky="ew", padx=(0, 4))
 
-        btn_agregar_monto = ttk.Button(
+        self.btn_agregar_monto = ttk.Button(
             frame_acciones_cat,
             text="➕ Monto",
             command=self._agregar_monto_global,
         )
-        btn_agregar_monto.pack(side=tk.LEFT)
+        self.btn_agregar_monto.grid(row=1, column=3, sticky="e")
 
         # --- B. Carrito de Compras (En Memoria) ---
         frame_carrito_header = tk.Frame(panel_izq, background=COLOR_FONDO_APP)
@@ -247,11 +271,21 @@ class PantallaPOS(tk.Frame):
         self.tree_carrito.heading("precio", text="P. Unitario")
         self.tree_carrito.heading("subtotal", text="Subtotal")
 
-        self.tree_carrito.column("index", width=30, anchor=tk.CENTER)
-        self.tree_carrito.column("descripcion", width=220, anchor=tk.W)
-        self.tree_carrito.column("cantidad", width=65, anchor=tk.CENTER)
-        self.tree_carrito.column("precio", width=95, anchor=tk.E)
-        self.tree_carrito.column("subtotal", width=105, anchor=tk.E)
+        configurar_columnas(
+            self.tree_carrito,
+            {
+                "index": (30, 25),
+                "descripcion": (190, 110),
+                "cantidad": (60, 45),
+                "precio": (90, 65),
+                "subtotal": (100, 75),
+            },
+        )
+        self.tree_carrito.column("index", anchor=tk.CENTER)
+        self.tree_carrito.column("descripcion", anchor=tk.W)
+        self.tree_carrito.column("cantidad", anchor=tk.CENTER)
+        self.tree_carrito.column("precio", anchor=tk.E)
+        self.tree_carrito.column("subtotal", anchor=tk.E)
 
         scroll_car = ttk.Scrollbar(
             frame_tree_car, orient="vertical", command=self.tree_carrito.yview
@@ -259,6 +293,9 @@ class PantallaPOS(tk.Frame):
         self.tree_carrito.configure(yscrollcommand=scroll_car.set)
         self.tree_carrito.grid(row=0, column=0, sticky="nsew")
         scroll_car.grid(row=0, column=1, sticky="ns")
+        self.scroll_h_carrito = agregar_scroll_horizontal(
+            self.tree_carrito, frame_tree_car, row=1, column=0
+        )
 
         # Controles y Resumen del Carrito
         frame_carrito_footer = tk.Frame(panel_izq, background=COLOR_FONDO_APP)
@@ -307,10 +344,27 @@ class PantallaPOS(tk.Frame):
             pady=12,
         )
         panel_der.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+        panel_der.grid_rowconfigure(0, weight=1)
+        panel_der.grid_columnconfigure(0, weight=1)
+
+        # 6. Botón de Acción Principal FUERA del marco desplazable, fijo abajo y siempre visible
+        self.btn_confirmar_venta = ttk.Button(
+            panel_der,
+            text="✅ Confirmar y Cobrar Venta",
+            style="Primary.TButton",
+            command=self._confirmar_venta,
+        )
+        self.btn_confirmar_venta.pack(fill=tk.X, side=tk.BOTTOM, pady=(8, 0))
+
+        # Marco Desplazable para los controles del panel derecho
+        self.marco_der_pos = MarcoDesplazable(panel_der, background=COLOR_BLANCO)
+        self.marco_der_pos.pack(fill=tk.BOTH, expand=True)
+
+        contenedor = self.marco_der_pos.interior
 
         # 1. Sección Cliente / Cartera (RF-CXC-01, RF-POS-03)
         lbl_sec_cli = tk.Label(
-            panel_der,
+            contenedor,
             text="👤 Ficha del Cliente / Cartera",
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
@@ -318,7 +372,7 @@ class PantallaPOS(tk.Frame):
         )
         lbl_sec_cli.pack(anchor="w", pady=(0, 4))
 
-        frame_selector_cli = tk.Frame(panel_der, background=COLOR_BLANCO)
+        frame_selector_cli = tk.Frame(contenedor, background=COLOR_BLANCO)
         frame_selector_cli.pack(fill=tk.X, pady=(0, 8))
 
         self.combo_clientes = ttk.Combobox(frame_selector_cli, state="readonly")
@@ -332,10 +386,9 @@ class PantallaPOS(tk.Frame):
         )
         self.btn_nuevo_cliente.pack(side=tk.RIGHT)
 
-
         # Tarjeta visual de estado crediticio
         self.frame_card_credito = tk.Frame(
-            panel_der,
+            contenedor,
             background="#f8f9fa",
             highlightbackground="#e9ecef",
             highlightthickness=1,
@@ -350,39 +403,42 @@ class PantallaPOS(tk.Frame):
             font=FUENTE_BASE_BOLD,
             background="#f8f9fa",
             foreground=COLOR_TEXTO_PRINCIPAL,
+            anchor="w",
+            justify=tk.LEFT,
         )
-        self.lbl_card_nombre.pack(anchor="w")
+        self.lbl_card_nombre.pack(fill=tk.X, anchor="w")
+        ajustar_wraplength(self.lbl_card_nombre)
 
-        # Fila de métricas: Límite, Saldo, Cupo
-        frame_metricas_c = tk.Frame(self.frame_card_credito, background="#f8f9fa")
-        frame_metricas_c.pack(fill=tk.X, pady=(4, 2))
-
+        # Fila de métricas 1 por línea: Límite, Saldo, Cupo
         self.lbl_card_limite = tk.Label(
-            frame_metricas_c,
+            self.frame_card_credito,
             text="Límite: $ 0.00",
             font=FUENTE_PEQUENA,
             background="#f8f9fa",
             foreground=COLOR_TEXTO_SECUNDARIO,
+            anchor="w",
         )
-        self.lbl_card_limite.pack(side=tk.LEFT, expand=True, anchor="w")
+        self.lbl_card_limite.pack(fill=tk.X, anchor="w", pady=1)
 
         self.lbl_card_saldo = tk.Label(
-            frame_metricas_c,
+            self.frame_card_credito,
             text="Saldo: $ 0.00",
             font=FUENTE_PEQUENA,
             background="#f8f9fa",
             foreground=COLOR_TEXTO_SECUNDARIO,
+            anchor="w",
         )
-        self.lbl_card_saldo.pack(side=tk.LEFT, expand=True, anchor="center")
+        self.lbl_card_saldo.pack(fill=tk.X, anchor="w", pady=1)
 
         self.lbl_card_cupo = tk.Label(
-            frame_metricas_c,
+            self.frame_card_credito,
             text="Cupo Disp: $ 0.00",
             font=FUENTE_BASE_BOLD,
             background="#f8f9fa",
             foreground="#27ae60",
+            anchor="w",
         )
-        self.lbl_card_cupo.pack(side=tk.RIGHT, expand=True, anchor="e")
+        self.lbl_card_cupo.pack(fill=tk.X, anchor="w", pady=1)
 
         # Badge de Categoría de Riesgo / Alerta
         self.lbl_card_scoring = tk.Label(
@@ -391,12 +447,15 @@ class PantallaPOS(tk.Frame):
             font=FUENTE_PEQUENA,
             background="#f8f9fa",
             foreground=COLOR_TEXTO_MUTED,
+            anchor="w",
+            justify=tk.LEFT,
         )
-        self.lbl_card_scoring.pack(anchor="w", pady=(2, 0))
+        self.lbl_card_scoring.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        ajustar_wraplength(self.lbl_card_scoring)
 
-        # 2. Selector de Tipo de Pago (RF-POS-03)
+        # 2. Selector de Tipo de Pago (RF-POS-03) en grid sin cortes
         lbl_sec_pago = tk.Label(
-            panel_der,
+            contenedor,
             text="💳 Método de Pago",
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
@@ -405,10 +464,12 @@ class PantallaPOS(tk.Frame):
         lbl_sec_pago.pack(anchor="w", pady=(6, 4))
 
         self.var_tipo_pago = tk.StringVar(value="efectivo")
-        frame_radios = tk.Frame(panel_der, background=COLOR_BLANCO)
+        frame_radios = tk.Frame(contenedor, background=COLOR_BLANCO)
         frame_radios.pack(fill=tk.X, pady=(0, 8))
+        frame_radios.grid_columnconfigure(0, weight=1)
+        frame_radios.grid_columnconfigure(1, weight=1)
 
-        r_efectivo = tk.Radiobutton(
+        self.r_efectivo = tk.Radiobutton(
             frame_radios,
             text="💵 Efectivo",
             variable=self.var_tipo_pago,
@@ -417,9 +478,9 @@ class PantallaPOS(tk.Frame):
             font=FUENTE_BASE,
             command=self._on_tipo_pago_cambiado,
         )
-        r_efectivo.pack(side=tk.LEFT, padx=(0, 10))
+        self.r_efectivo.grid(row=0, column=0, sticky="w", padx=2, pady=2)
 
-        r_nequi = tk.Radiobutton(
+        self.r_nequi = tk.Radiobutton(
             frame_radios,
             text="📱 Nequi",
             variable=self.var_tipo_pago,
@@ -428,9 +489,9 @@ class PantallaPOS(tk.Frame):
             font=FUENTE_BASE,
             command=self._on_tipo_pago_cambiado,
         )
-        r_nequi.pack(side=tk.LEFT, padx=(0, 10))
+        self.r_nequi.grid(row=0, column=1, sticky="w", padx=2, pady=2)
 
-        r_credito = tk.Radiobutton(
+        self.r_credito = tk.Radiobutton(
             frame_radios,
             text="📑 Crédito (Fiar)",
             variable=self.var_tipo_pago,
@@ -439,10 +500,10 @@ class PantallaPOS(tk.Frame):
             font=FUENTE_BASE,
             command=self._on_tipo_pago_cambiado,
         )
-        r_credito.pack(side=tk.LEFT)
+        self.r_credito.grid(row=1, column=0, columnspan=2, sticky="w", padx=2, pady=2)
 
         # 3. Inputs Reactivos de Cobro / Monto Pagado
-        frame_cobro = tk.Frame(panel_der, background=COLOR_BLANCO)
+        frame_cobro = tk.Frame(contenedor, background=COLOR_BLANCO)
         frame_cobro.pack(fill=tk.X, pady=(4, 10))
 
         self.lbl_monto_recibido = tk.Label(
@@ -470,7 +531,7 @@ class PantallaPOS(tk.Frame):
 
         # 4. Notificación de éxito post-venta
         self.frame_exito = tk.Frame(
-            panel_der,
+            contenedor,
             background="#d4edda",
             highlightbackground="#27ae60",
             highlightthickness=1,
@@ -483,23 +544,14 @@ class PantallaPOS(tk.Frame):
             background="#d4edda",
             foreground="#155724",
             font=FUENTE_BASE_BOLD,
-            wraplength=350,
             justify=tk.LEFT,
         )
-        self.lbl_exito.pack(fill=tk.X)
+        self.lbl_exito.pack(fill=tk.X, anchor="w")
+        ajustar_wraplength(self.lbl_exito)
         self.frame_exito.pack_forget()
 
         # 5. Componente de Errores de Negocio
-        self.area_error = AreaError(panel_der)
-
-        # 6. Botón de Acción Principal (Confirmar Venta)
-        self.btn_confirmar_venta = ttk.Button(
-            panel_der,
-            text="✅ Confirmar y Cobrar Venta",
-            style="Primary.TButton",
-            command=self._confirmar_venta,
-        )
-        self.btn_confirmar_venta.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0))
+        self.area_error = AreaError(contenedor)
 
     # =========================================================================
     # LÓGICA DEL CARRITO (EN MEMORIA)

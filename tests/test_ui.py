@@ -2169,18 +2169,170 @@ def test_tablas_con_columnas_estirables(ui_app):
             assert col_info["minwidth"] >= fuente_enc.measure(txt)
 
 
+def _dentro_de(widget, contenedor):
+    return (widget.winfo_rootx() >= contenedor.winfo_rootx()
+            and widget.winfo_rooty() >= contenedor.winfo_rooty()
+            and widget.winfo_rootx() + widget.winfo_width() <= contenedor.winfo_rootx() + contenedor.winfo_width()
+            and widget.winfo_rooty() + widget.winfo_height() <= contenedor.winfo_rooty() + contenedor.winfo_height())
 
 
+def test_pos_controles_visibles_en_ventana_minima(ui_app):
+    """
+    Verifica que en el tamaño mínimo real de la aplicación, los controles esenciales
+    (btn_agregar_cat, btn_agregar_monto, btn_confirmar_venta y r_credito en canvas)
+    estén mapeados y contenidos en los límites visibles.
+    """
+    ui_app.deiconify()
+    _login_como(ui_app, "admin", "admin123")
+    min_w, min_h = ui_app.minsize()
+    geom_orig = ui_app.geometry()
+    ui_app.geometry(f"{min_w}x{min_h}")
+    ui_app.navegar_a("pos")
+    ui_app.update()
+
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    try:
+        assert pos.btn_agregar_cat.winfo_ismapped()
+        assert _dentro_de(pos.btn_agregar_cat, ui_app)
+
+        assert pos.btn_agregar_monto.winfo_ismapped()
+        assert _dentro_de(pos.btn_agregar_monto, ui_app)
+
+        assert pos.btn_confirmar_venta.winfo_ismapped()
+        assert _dentro_de(pos.btn_confirmar_venta, ui_app)
+
+        assert _dentro_de(pos.r_credito, pos.marco_der_pos.canvas)
+
+        pos.var_tipo_pago.set("credito")
+        pos._on_tipo_pago_cambiado()
+        ui_app.update()
+
+        assert _dentro_de(pos.btn_confirmar_venta, ui_app)
+    finally:
+        pos.var_tipo_pago.set("efectivo")
+        pos._on_tipo_pago_cambiado()
+        ui_app.geometry(geom_orig)
+        ui_app.withdraw()
+        ui_app.update()
 
 
+def test_inventario_controles_visibles_en_ventana_minima(ui_app):
+    """
+    Verifica que en el tamaño mínimo real, los radiobuttons de filtro estén dentro de
+    ui_app y que tras desplazar al final el marco desplazable de detalle, el botón
+    btn_desactivar quede dentro del canvas visible.
+    """
+    ui_app.deiconify()
+    _login_como(ui_app, "admin", "admin123")
+    min_w, min_h = ui_app.minsize()
+    geom_orig = ui_app.geometry()
+    ui_app.geometry(f"{min_w}x{min_h}")
+    ui_app.navegar_a("inventario")
+    ui_app.update()
+
+    inv: PantallaInventario = ui_app.pantallas["inventario"]
+    try:
+        assert _dentro_de(inv.r_todos, ui_app)
+        assert _dentro_de(inv.r_alerta, ui_app)
+
+        inv.marco_der_inv.desplazar_al_final()
+        ui_app.update()
+
+        assert _dentro_de(inv.btn_desactivar, inv.marco_der_inv.canvas)
+    finally:
+        ui_app.geometry(geom_orig)
+        ui_app.withdraw()
+        ui_app.update()
 
 
+def test_dialogo_nuevo_cliente_se_ajusta_al_contenido(ui_app):
+    """
+    Verifica que con la aplicación en su tamaño mínimo real, al abrir DialogoNuevoCliente,
+    los controles btn_crear y entry_nombre queden contenidos dentro del diálogo.
+    """
+    ui_app.deiconify()
+    _login_como(ui_app, "admin", "admin123")
+    min_w, min_h = ui_app.minsize()
+    geom_orig = ui_app.geometry()
+    ui_app.geometry(f"{min_w}x{min_h}")
+    ui_app.update()
+
+    dlg = DialogoNuevoCliente(ui_app, ui_app.sesion.conn, None)
+    ui_app.update()
+    try:
+        assert _dentro_de(dlg.btn_crear, dlg)
+        assert _dentro_de(dlg.entry_nombre, dlg)
+    finally:
+        dlg.destroy()
+        ui_app.geometry(geom_orig)
+        ui_app.withdraw()
+        ui_app.update()
 
 
+def test_tablas_pos_inventario_usuarios_estirables(ui_app):
+    """
+    Verifica que las tablas de POS (catálogo y carrito), Inventario (catálogo maestro)
+    y Usuarios (catálogo de usuarios) dispongan de barras de desplazamiento horizontal
+    y sus columnas tengan stretch=True y minwidth mayor a cero.
+    """
+    ui_app.deiconify()
+    _login_como(ui_app, "admin", "admin123")
+    fuente_enc = font.Font(font=FUENTE_BASE_BOLD)
 
+    # 1. POS: tree_catalogo y tree_carrito
+    ui_app.navegar_a("pos")
+    pos: PantallaPOS = ui_app.pantallas["pos"]
+    ui_app.update()
 
+    assert hasattr(pos, "scroll_h_catalogo_pos")
+    assert pos.scroll_h_catalogo_pos.winfo_exists()
+    for col in pos.tree_catalogo["columns"]:
+        col_info = pos.tree_catalogo.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(pos.tree_catalogo.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
 
+    assert hasattr(pos, "scroll_h_carrito")
+    assert pos.scroll_h_carrito.winfo_exists()
+    for col in pos.tree_carrito["columns"]:
+        col_info = pos.tree_carrito.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(pos.tree_carrito.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
 
+    # 2. Inventario: tree_catalogo
+    ui_app.navegar_a("inventario")
+    inv: PantallaInventario = ui_app.pantallas["inventario"]
+    ui_app.update()
+
+    assert hasattr(inv, "scroll_h_catalogo_inv")
+    assert inv.scroll_h_catalogo_inv.winfo_exists()
+    for col in inv.tree_catalogo["columns"]:
+        col_info = inv.tree_catalogo.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(inv.tree_catalogo.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
+
+    # 3. Usuarios: tree_usuarios
+    ui_app.navegar_a("usuarios")
+    usr: PantallaUsuarios = ui_app.pantallas["usuarios"]
+    ui_app.update()
+
+    assert hasattr(usr, "scroll_h_usuarios")
+    assert usr.scroll_h_usuarios.winfo_exists()
+    for col in usr.tree_usuarios["columns"]:
+        col_info = usr.tree_usuarios.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(usr.tree_usuarios.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
 
 
 

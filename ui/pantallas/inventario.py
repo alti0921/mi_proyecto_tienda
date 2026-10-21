@@ -32,7 +32,14 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError, BotonRestringidoPorRol
+from ui.widgets_comunes import (
+    AreaError,
+    BotonRestringidoPorRol,
+    MarcoDesplazable,
+    ajustar_wraplength,
+    configurar_columnas,
+    agregar_scroll_horizontal,
+)
 
 CATEGORIAS_VALIDAS = ("canasta_basica", "cesta_mixta", "consumo_suntuario")
 
@@ -62,8 +69,8 @@ class PantallaInventario(tk.Frame):
 
         # Configuración de Grid: Cabecera superior y dos columnas Maestro-Detalle
         self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=6)  # Catálogo Maestro
-        self.grid_columnconfigure(1, weight=4)  # Detalle y Acciones
+        self.grid_columnconfigure(0, weight=6, uniform="inv")  # Catálogo Maestro
+        self.grid_columnconfigure(1, weight=4, uniform="inv")  # Detalle y Acciones
 
         self._crear_cabecera()
         self._crear_panel_maestro_catalogo()
@@ -126,52 +133,57 @@ class PantallaInventario(tk.Frame):
         panel_izq.grid_rowconfigure(1, weight=1)
         panel_izq.grid_columnconfigure(0, weight=1)
 
-        # Barra de Búsqueda y Filtro de Stock Bajo
+        # Barra de Búsqueda y Filtro de Stock Bajo en 2 líneas
         frame_filtros = tk.Frame(panel_izq, background=COLOR_FONDO_APP)
         frame_filtros.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        frame_filtros.grid_columnconfigure(1, weight=1)
 
+        # Fila 0: Búsqueda
         tk.Label(
             frame_filtros,
             text="🔍 Buscar:",
             font=FUENTE_BASE_BOLD,
             background=COLOR_FONDO_APP,
             foreground=COLOR_TEXTO_PRINCIPAL,
-        ).pack(side=tk.LEFT, padx=(0, 4))
+        ).grid(row=0, column=0, sticky="w", padx=(0, 4), pady=(0, 4))
 
-        self.entry_busqueda = ttk.Entry(frame_filtros, width=22)
-        self.entry_busqueda.pack(side=tk.LEFT, padx=(0, 6))
+        self.entry_busqueda = ttk.Entry(frame_filtros)
+        self.entry_busqueda.grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=(0, 4))
         self.entry_busqueda.bind("<KeyRelease>", lambda e: self._filtrar_catalogo())
         self.entry_busqueda.bind("<Return>", lambda e: self._filtrar_catalogo())
 
         btn_buscar = ttk.Button(
             frame_filtros, text="Buscar", command=self._filtrar_catalogo
         )
-        btn_buscar.pack(side=tk.LEFT, padx=(0, 4))
+        btn_buscar.grid(row=0, column=2, sticky="w", padx=(0, 4), pady=(0, 4))
 
         btn_limpiar = ttk.Button(
             frame_filtros, text="Limpiar", command=self._limpiar_filtros
         )
-        btn_limpiar.pack(side=tk.LEFT, padx=(0, 10))
+        btn_limpiar.grid(row=0, column=3, sticky="w", pady=(0, 4))
 
-        # Selector de Filtro: Todos vs Stock Bajo
+        # Fila 1: Filtro de Estado
+        frame_radios_filtro = tk.Frame(frame_filtros, background=COLOR_FONDO_APP)
+        frame_radios_filtro.grid(row=1, column=0, columnspan=4, sticky="w", pady=(2, 0))
+
         self.var_filtro_stock = tk.StringVar(value="todos")
-        r_todos = ttk.Radiobutton(
-            frame_filtros,
+        self.r_todos = ttk.Radiobutton(
+            frame_radios_filtro,
             text="Todos los activos",
             variable=self.var_filtro_stock,
             value="todos",
             command=self._filtrar_catalogo,
         )
-        r_todos.pack(side=tk.LEFT, padx=(0, 6))
+        self.r_todos.pack(side=tk.LEFT, padx=(0, 10))
 
-        r_alerta = ttk.Radiobutton(
-            frame_filtros,
+        self.r_alerta = ttk.Radiobutton(
+            frame_radios_filtro,
             text="⚠️ Solo stock bajo",
             variable=self.var_filtro_stock,
             value="alerta",
             command=self._filtrar_catalogo,
         )
-        r_alerta.pack(side=tk.LEFT)
+        self.r_alerta.pack(side=tk.LEFT)
 
         # Treeview de Catálogo Maestro
         frame_tree = tk.Frame(
@@ -201,15 +213,29 @@ class PantallaInventario(tk.Frame):
         self.tree_catalogo.heading("stock_min", text="Mínimo")
         self.tree_catalogo.heading("estado", text="Alerta")
 
-        self.tree_catalogo.column("id", width=35, anchor=tk.CENTER)
-        self.tree_catalogo.column("codigo", width=105, anchor=tk.W)
-        self.tree_catalogo.column("nombre", width=180, anchor=tk.W)
-        self.tree_catalogo.column("categoria", width=110, anchor=tk.W)
-        self.tree_catalogo.column("costo", width=75, anchor=tk.E)
-        self.tree_catalogo.column("precio", width=80, anchor=tk.E)
-        self.tree_catalogo.column("stock", width=55, anchor=tk.CENTER)
-        self.tree_catalogo.column("stock_min", width=60, anchor=tk.CENTER)
-        self.tree_catalogo.column("estado", width=70, anchor=tk.CENTER)
+        configurar_columnas(
+            self.tree_catalogo,
+            {
+                "id": (35, 25),
+                "codigo": (95, 75),
+                "nombre": (170, 110),
+                "categoria": (105, 75),
+                "costo": (75, 55),
+                "precio": (80, 60),
+                "stock": (55, 45),
+                "stock_min": (60, 45),
+                "estado": (70, 55),
+            },
+        )
+        self.tree_catalogo.column("id", anchor=tk.CENTER)
+        self.tree_catalogo.column("codigo", anchor=tk.W)
+        self.tree_catalogo.column("nombre", anchor=tk.W)
+        self.tree_catalogo.column("categoria", anchor=tk.W)
+        self.tree_catalogo.column("costo", anchor=tk.E)
+        self.tree_catalogo.column("precio", anchor=tk.E)
+        self.tree_catalogo.column("stock", anchor=tk.CENTER)
+        self.tree_catalogo.column("stock_min", anchor=tk.CENTER)
+        self.tree_catalogo.column("estado", anchor=tk.CENTER)
 
         # Configuración de tag de resaltado en ámbar (#fff3cd) para productos en alerta
         self.tree_catalogo.tag_configure("alerta_stock", background=COLOR_ALERTA_BG)
@@ -220,6 +246,9 @@ class PantallaInventario(tk.Frame):
         self.tree_catalogo.configure(yscrollcommand=scroll_tree.set)
         self.tree_catalogo.grid(row=0, column=0, sticky="nsew")
         scroll_tree.grid(row=0, column=1, sticky="ns")
+        self.scroll_h_catalogo_inv = agregar_scroll_horizontal(
+            self.tree_catalogo, frame_tree, row=1, column=0
+        )
 
         # Vinculación Maestro-Detalle: clic en fila carga el producto sin diálogo modal
         self.tree_catalogo.bind("<<TreeviewSelect>>", self._on_producto_seleccionado)
@@ -231,23 +260,27 @@ class PantallaInventario(tk.Frame):
     def _crear_panel_detalle_acciones(self) -> None:
         panel_der = tk.Frame(self, background=COLOR_FONDO_APP)
         panel_der.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=(0, 10))
-        panel_der.grid_rowconfigure(0, weight=0)  # Ajuste de Stock
-        panel_der.grid_rowconfigure(1, weight=1)  # Notebook (Editar / Crear)
+        panel_der.grid_rowconfigure(0, weight=1)
         panel_der.grid_columnconfigure(0, weight=1)
+
+        self.marco_der_inv = MarcoDesplazable(panel_der, background=COLOR_FONDO_APP)
+        self.marco_der_inv.pack(fill=tk.BOTH, expand=True)
+
+        contenedor = self.marco_der_inv.interior
 
         # ---------------------------------------------------------------------
         # Card 1: Ajuste Rápido de Stock con Signo y Stepper (RS-05)
         # Habilitado para Administrador Y Vendedor
         # ---------------------------------------------------------------------
         card_ajuste = tk.Frame(
-            panel_der,
+            contenedor,
             background=COLOR_BLANCO,
             highlightbackground=COLOR_BORDE_NEUTRAL,
             highlightthickness=1,
             padx=12,
             pady=10,
         )
-        card_ajuste.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        card_ajuste.pack(fill=tk.X, pady=(0, 8))
 
         self.lbl_tit_ajuste = tk.Label(
             card_ajuste,
@@ -264,17 +297,22 @@ class PantallaInventario(tk.Frame):
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
             foreground="#2980b9",
+            justify=tk.LEFT,
         )
-        self.lbl_info_prod_ajuste.pack(anchor="w", pady=(0, 6))
+        self.lbl_info_prod_ajuste.pack(fill=tk.X, anchor="w", pady=(0, 6))
+        ajustar_wraplength(self.lbl_info_prod_ajuste)
 
-        # Fila de Controles: Dirección y Magnitud Entera
+        # Fila de Controles en 2 líneas: Dirección y Magnitud Entera
         frame_controles_ajuste = tk.Frame(card_ajuste, background=COLOR_BLANCO)
         frame_controles_ajuste.pack(fill=tk.X, pady=(2, 6))
 
-        # Selector de Dirección (Entrada vs Salida)
+        # Línea 1: Dirección (Entrada vs Salida)
+        frame_dir = tk.Frame(frame_controles_ajuste, background=COLOR_BLANCO)
+        frame_dir.pack(fill=tk.X, pady=(0, 4))
+
         self.var_direccion_ajuste = tk.StringVar(value="entrada")
         r_entrada = ttk.Radiobutton(
-            frame_controles_ajuste,
+            frame_dir,
             text="📥 Entrada (+)",
             variable=self.var_direccion_ajuste,
             value="entrada",
@@ -282,15 +320,19 @@ class PantallaInventario(tk.Frame):
         r_entrada.pack(side=tk.LEFT, padx=(0, 10))
 
         r_salida = ttk.Radiobutton(
-            frame_controles_ajuste,
+            frame_dir,
             text="📤 Salida (-)",
             variable=self.var_direccion_ajuste,
             value="salida",
         )
-        r_salida.pack(side=tk.LEFT, padx=(0, 15))
+        r_salida.pack(side=tk.LEFT)
+
+        # Línea 2: Cantidad y botones rápidos delta
+        frame_cant = tk.Frame(frame_controles_ajuste, background=COLOR_BLANCO)
+        frame_cant.pack(fill=tk.X)
 
         tk.Label(
-            frame_controles_ajuste,
+            frame_cant,
             text="Cant:",
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
@@ -298,7 +340,7 @@ class PantallaInventario(tk.Frame):
 
         # Stepper Entero (Sin decimales)
         self.spin_magnitud = ttk.Spinbox(
-            frame_controles_ajuste, from_=1, to=9999, width=5, font=("Segoe UI", 10, "bold")
+            frame_cant, from_=1, to=9999, width=5, font=("Segoe UI", 10, "bold")
         )
         self.spin_magnitud.set(1)
         self.spin_magnitud.pack(side=tk.LEFT, padx=(0, 8))
@@ -306,7 +348,7 @@ class PantallaInventario(tk.Frame):
         # Botones Rápidos de Incremento
         for delta in (1, 5, 10):
             btn_step = ttk.Button(
-                frame_controles_ajuste,
+                frame_cant,
                 text=f"+{delta}",
                 width=3,
                 command=lambda d=delta: self._incrementar_stepper(d),
@@ -329,14 +371,16 @@ class PantallaInventario(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_EXITO,
             font=FUENTE_BASE_BOLD,
+            justify=tk.LEFT,
         )
-        self.lbl_exito_ajuste.pack(anchor="w", pady=(2, 0))
+        self.lbl_exito_ajuste.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_ajuste)
 
         # ---------------------------------------------------------------------
         # Card 2: Pestañas de Edición y Creación (Notebook)
         # ---------------------------------------------------------------------
-        self.notebook = ttk.Notebook(panel_der)
-        self.notebook.grid(row=1, column=0, sticky="nsew")
+        self.notebook = ttk.Notebook(contenedor)
+        self.notebook.pack(fill=tk.X, pady=(0, 0))
 
         # Pestaña 1: Editar Producto Seleccionado (Admin-Only)
         self.tab_editar = tk.Frame(self.notebook, background=COLOR_BLANCO, padx=12, pady=10)
@@ -387,7 +431,8 @@ class PantallaInventario(tk.Frame):
         # Mensajes de error y confirmación
         self.area_error_edit = AreaError(parent)
         self.lbl_exito_edit = tk.Label(parent, text="", background=COLOR_BLANCO, foreground=COLOR_EXITO, font=FUENTE_BASE_BOLD)
-        self.lbl_exito_edit.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        self.lbl_exito_edit.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_edit)
 
         # Botones de Acción (Admin-Only vía BotonRestringidoPorRol)
         frame_btns_edit = tk.Frame(parent, background=COLOR_BLANCO)
@@ -459,7 +504,8 @@ class PantallaInventario(tk.Frame):
         # Mensajes
         self.area_error_crear = AreaError(parent)
         self.lbl_exito_crear = tk.Label(parent, text="", background=COLOR_BLANCO, foreground=COLOR_EXITO, font=FUENTE_BASE_BOLD)
-        self.lbl_exito_crear.grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        self.lbl_exito_crear.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_crear)
 
         # Botón Guardar Producto (Admin-Only vía BotonRestringidoPorRol)
         self.btn_guardar_crear = BotonRestringidoPorRol(
