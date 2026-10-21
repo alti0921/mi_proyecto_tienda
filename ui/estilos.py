@@ -1,6 +1,45 @@
 import tkinter as tk
 from tkinter import ttk
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+# ============================================================================
+# ESCALADO DINÁMICO Y CONVERSIÓN DE PÍXELES (DPI AWARENESS)
+# ============================================================================
+
+def factor_escala(root: Optional[Any] = None) -> float:
+    """
+    Función pura que calcula el factor de escala de la ventana relativo a 96 DPI (96/72).
+    Garantiza un mínimo de 1.0.
+    """
+    if root is None:
+        root = tk._default_root
+    if root is None:
+        return 1.0
+    try:
+        scaling_val = float(root.tk.call("tk", "scaling"))
+        base = 96.0 / 72.0
+        factor = scaling_val / base
+        if factor < 1.01:
+            return 1.0
+        return max(1.0, factor)
+    except Exception:
+        return 1.0
+
+
+def px(root_or_n: Any, n: Optional[int] = None) -> int:
+    """
+    Convierte píxeles lógicos a píxeles enteros escalados según el factor de escala.
+    Soporta las firmas px(root, n) y px(n).
+    """
+    if n is None:
+        val = int(root_or_n)
+        root = tk._default_root
+    else:
+        root = root_or_n
+        val = int(n)
+
+    factor = factor_escala(root)
+    return round(val * factor)
 
 # ============================================================================
 # PALETA DE COLORES (Conforme a Wireframes y Guía de Estilos)
@@ -188,5 +227,9 @@ def configurar_estilos(root: tk.Tk) -> ttk.Style:
 
     # Combobox
     style.configure("TCombobox", padding=(6, 4))
+
+    # Treeview
+    style.configure("Treeview", rowheight=px(root, 24))
+    style.configure("Treeview.Heading", font=FUENTE_BASE_BOLD)
 
     return style

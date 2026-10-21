@@ -123,6 +123,7 @@ class BarraSuperior(tk.Frame):
     """
     Barra superior horizontal persistente para navegación y control de sesión (Wireframes 2 a 5).
     Despliega el título del sistema, la información dinámica del usuario en sesión y el botón para cerrar sesión.
+    Adaptable a diferentes anchos de pantalla mediante modo compacto automático.
     """
 
     def __init__(
@@ -150,7 +151,28 @@ class BarraSuperior(tk.Frame):
         self.on_cerrar_sesion = on_cerrar_sesion
         self.on_navegar = on_navegar
 
-        # 1. Título a la izquierda
+        # 1. Lado derecho: Información del usuario y Botón de Cierre
+        # Se empaqueta PRIMERO (side=RIGHT) para garantizar que 'Cerrar sesión' siempre tenga espacio y se vea
+        self.frame_derecho = tk.Frame(self, background=COLOR_BARRA_SUPERIOR)
+        self.frame_derecho.pack(side=tk.RIGHT)
+
+        self.lbl_usuario = tk.Label(
+            self.frame_derecho,
+            text="Usuario: No autenticado",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_BARRA_SUPERIOR,
+            foreground="#2c3e50",
+        )
+        self.lbl_usuario.pack(side=tk.LEFT, padx=(0, 15))
+
+        self.btn_logout = ttk.Button(
+            self.frame_derecho,
+            text="Cerrar sesión",
+            command=self.on_cerrar_sesion,
+        )
+        self.btn_logout.pack(side=tk.LEFT)
+
+        # 2. Título a la izquierda
         self.lbl_titulo = tk.Label(
             self,
             text=titulo,
@@ -160,9 +182,9 @@ class BarraSuperior(tk.Frame):
         )
         self.lbl_titulo.pack(side=tk.LEFT)
 
-        # 2. Botones de navegación central (si hay callback disponible)
+        # 3. Botones de navegación central
         self.frame_nav = tk.Frame(self, background=COLOR_BARRA_SUPERIOR)
-        self.frame_nav.pack(side=tk.LEFT, padx=25)
+        self.frame_nav.pack(side=tk.LEFT, padx=15)
 
         self.btn_pos = ttk.Button(
             self.frame_nav, text="🛒 POS", command=lambda: self._navegar("pos")
@@ -195,25 +217,77 @@ class BarraSuperior(tk.Frame):
         )
         self.btn_usuarios.pack(side=tk.LEFT, padx=3)
 
-        # 3. Lado derecho: Información del usuario y Botón de Cierre
-        self.frame_derecho = tk.Frame(self, background=COLOR_BARRA_SUPERIOR)
-        self.frame_derecho.pack(side=tk.RIGHT)
+        # Textos completos y compactos para preservación exacta
+        self._es_compacto: bool = False
+        self._texto_titulo_completo = titulo
+        self._texto_titulo_compacto = "Mi Tienda"
 
-        self.lbl_usuario = tk.Label(
-            self.frame_derecho,
-            text="Usuario: No autenticado",
-            font=FUENTE_BASE_BOLD,
-            background=COLOR_BARRA_SUPERIOR,
-            foreground="#2c3e50",
-        )
-        self.lbl_usuario.pack(side=tk.LEFT, padx=(0, 15))
+        self._nav_textos_completos = {
+            self.btn_pos: "🛒 POS",
+            self.btn_cxc: "👤 Clientes / CxC",
+            self.btn_inv: "📦 Inventario",
+            self.btn_rep: "📊 Reportes",
+            self.btn_usuarios: "🔑 Usuarios",
+        }
+        self._nav_textos_compactos = {
+            self.btn_pos: "POS",
+            self.btn_cxc: "Clientes",
+            self.btn_inv: "Inventario",
+            self.btn_rep: "Reportes",
+            self.btn_usuarios: "Usuarios",
+        }
 
-        self.btn_logout = ttk.Button(
-            self.frame_derecho,
-            text="Cerrar sesión",
-            command=self.on_cerrar_sesion,
-        )
-        self.btn_logout.pack(side=tk.LEFT)
+        self._texto_usuario_completo = "Usuario: No autenticado"
+        self._texto_usuario_compacto = "👤 No autenticado"
+
+        self._ancho_requerido_completo: int = 0
+
+        # Enlazar evento <Configure> para modo compacto automático
+        self.bind("<Configure>", self._al_redimensionar)
+
+    @property
+    def es_compacto(self) -> bool:
+        """Indica si la barra superior se encuentra actualmente en modo compacto."""
+        return self._es_compacto
+
+    def aplicar_modo_compacto(self, compacto: bool) -> None:
+        """
+        Aplica o desactiva el modo compacto de la barra superior restaurando o
+        abreviando textos sin reconstruir elementos.
+        """
+        self._es_compacto = bool(compacto)
+        if self._es_compacto:
+            self.lbl_titulo.config(text=self._texto_titulo_compacto)
+            for btn, txt in self._nav_textos_compactos.items():
+                btn.config(text=txt)
+            self.lbl_usuario.config(text=self._texto_usuario_compacto)
+        else:
+            self.lbl_titulo.config(text=self._texto_titulo_completo)
+            for btn, txt in self._nav_textos_completos.items():
+                btn.config(text=txt)
+            self.lbl_usuario.config(text=self._texto_usuario_completo)
+
+        self.btn_rep.actualizar_estado()
+
+    def _al_redimensionar(self, event) -> None:
+        """Detecta cambios de ancho de la barra superior y conmuta el modo compacto si no cabe."""
+        if event.widget is not self:
+            return
+        ancho_disp = event.width
+        if not self._es_compacto:
+            ancho_req = (
+                self.lbl_titulo.winfo_reqwidth()
+                + self.frame_nav.winfo_reqwidth()
+                + self.frame_derecho.winfo_reqwidth()
+                + 40
+            )
+            self._ancho_requerido_completo = max(self._ancho_requerido_completo, ancho_req)
+            if ancho_req > ancho_disp:
+                self.aplicar_modo_compacto(True)
+        else:
+            umbral = getattr(self, "_ancho_requerido_completo", 1040)
+            if ancho_disp >= umbral + 10:
+                self.aplicar_modo_compacto(False)
 
     def _navegar(self, pantalla: str) -> None:
         if self.on_navegar:
@@ -224,11 +298,15 @@ class BarraSuperior(tk.Frame):
         if self.sesion.esta_autenticado:
             u = self.sesion.usuario_actual
             rol_etiqueta = "Administrador" if u.rol == "admin" else "Vendedor"
-            self.lbl_usuario.config(
-                text=f"👤 {u.nombre} ({rol_etiqueta})"
-            )
+            self._texto_usuario_completo = f"👤 {u.nombre} · {rol_etiqueta}"
+            self._texto_usuario_compacto = f"👤 {rol_etiqueta}"
         else:
-            self.lbl_usuario.config(text="Usuario: No autenticado")
+            self._texto_usuario_completo = "Usuario: No autenticado"
+            self._texto_usuario_compacto = "👤 No autenticado"
+
+        self.lbl_usuario.config(
+            text=self._texto_usuario_compacto if self._es_compacto else self._texto_usuario_completo
+        )
 
         # Refrescar botones restringidos
         self.btn_rep.actualizar_estado()

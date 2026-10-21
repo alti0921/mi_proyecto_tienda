@@ -1,10 +1,12 @@
+import sys
+import ctypes
 import sqlite3
 import tkinter as tk
 from tkinter import ttk
 from typing import Dict, Optional, Any
 
 from db.connection import get_connection
-from ui.estilos import COLOR_FONDO_APP, configurar_estilos
+from ui.estilos import COLOR_FONDO_APP, configurar_estilos, px
 from ui.sesion import SesionActual
 from ui.widgets_comunes import BarraSuperior
 from ui.pantallas.login import PantallaLogin
@@ -40,14 +42,44 @@ class App(tk.Tk):
     el tema visual y la navegación desacoplada entre pantallas.
     """
 
-    def __init__(self, conn: Optional[sqlite3.Connection] = None, *args, **kwargs):
+    def __init__(
+        self,
+        conn: Optional[sqlite3.Connection] = None,
+        target_scale: Optional[float] = None,
+        geom: Optional[str] = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
 
-        # 1. Configuración de Ventana
+        if target_scale is not None:
+            self.tk.call("tk", "scaling", target_scale)
+
+        # 1. Configuración de Ventana y Adaptabilidad
         self.title("Sistema de Información y Scoring Crediticio — Micronegocios")
-        self.geometry("1120x720")
-        self.minsize(980, 640)
         self.configure(background=COLOR_FONDO_APP)
+
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+
+        min_w = int(min(px(self, 900), sw * 0.95))
+        min_h = int(min(px(self, 600), sh * 0.90))
+        self.minsize(min_w, min_h)
+
+        if geom:
+            self.geometry(geom)
+        else:
+            init_w = int(sw * 0.90)
+            init_h = int(sh * 0.85)
+            pos_x = max(0, (sw - init_w) // 2)
+            pos_y = max(0, (sh - init_h) // 2)
+            self.geometry(f"{init_w}x{init_h}+{pos_x}+{pos_y}")
+
+            if sys.platform == "win32":
+                try:
+                    self.state("zoomed")
+                except Exception:
+                    pass
 
         # 2. Persistencia y Sesión
         self.conn = conn if conn is not None else get_connection()
@@ -169,6 +201,20 @@ class App(tk.Tk):
         super().destroy()
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Punto de entrada principal con reconocimiento de DPI de Windows antes de crear la ventana Tk."""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
     app = App()
     app.mainloop()
+
+
+if __name__ == "__main__":
+    main()

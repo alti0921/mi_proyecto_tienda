@@ -1,4 +1,5 @@
 import os
+import sys
 import sqlite3
 import pytest
 import tkinter as tk
@@ -1942,6 +1943,95 @@ def test_vencimiento_en_cartera_y_perfil(ui_app, crear_cliente_score_alto):
     assert txt_venc_sin_deuda == "Sin saldo pendiente"
 
     _login_como(ui_app, "admin", "admin123")
+
+
+def test_barra_cerrar_sesion_visible_en_ventana_pequena(ui_app):
+    """
+    Verifica que en el tamaño mínimo de la ventana, el botón 'Cerrar sesión'
+    se mantenga visible, completamente mapeado y contenido dentro del borde derecho.
+    Verifica además la coherencia del modo compacto.
+    """
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+
+    geom_original = ui_app.geometry()
+    min_w, min_h = ui_app.minsize()
+
+    if sys.platform == "win32":
+        try:
+            ui_app.state("normal")
+        except Exception:
+            pass
+
+    ui_app.deiconify()
+    ui_app.geometry(f"{min_w}x{min_h}")
+    ui_app.update()
+
+    barra = ui_app.barra_superior
+    btn_logout = barra.btn_logout
+
+    # Verificar que el botón de cerrar sesión está mapeado
+    assert btn_logout.winfo_ismapped() == 1
+
+    # Borde derecho del botón vs borde derecho de la ventana
+    borde_derecho_btn = btn_logout.winfo_rootx() + btn_logout.winfo_width()
+    borde_derecho_ventana = ui_app.winfo_rootx() + ui_app.winfo_width()
+    assert borde_derecho_btn <= borde_derecho_ventana
+
+    # Coherencia del modo compacto
+    if barra.es_compacto:
+        assert "Administrador" in barra.lbl_usuario.cget("text")
+
+    # Restaurar estado y tamaño original
+    barra.aplicar_modo_compacto(False)
+    ui_app.geometry(geom_original)
+    ui_app.withdraw()
+    ui_app.update()
+    _login_como(ui_app, "admin", "admin123")
+
+
+def test_barra_modo_compacto_restaura_textos(ui_app):
+    """
+    Verifica que al alternar manualmente el modo compacto, los textos completos
+    originales de los botones de navegación, el título y lbl_usuario se restauren exactamente.
+    """
+    _login_como(ui_app, "admin", "admin123")
+    ui_app.navegar_a("pos")
+    barra = ui_app.barra_superior
+    barra.aplicar_modo_compacto(False)
+
+    # Guardar textos originales
+    titulo_orig = barra.lbl_titulo.cget("text")
+    usuario_orig = barra.lbl_usuario.cget("text")
+    nav_orig = {
+        barra.btn_pos: barra.btn_pos.cget("text"),
+        barra.btn_cxc: barra.btn_cxc.cget("text"),
+        barra.btn_inv: barra.btn_inv.cget("text"),
+        barra.btn_rep: barra.btn_rep.cget("text"),
+        barra.btn_usuarios: barra.btn_usuarios.cget("text"),
+    }
+
+    # Aplicar modo compacto
+    barra.aplicar_modo_compacto(True)
+    assert barra.es_compacto is True
+    assert barra.lbl_titulo.cget("text") == "Mi Tienda"
+    assert barra.btn_pos.cget("text") == "POS"
+    assert barra.btn_cxc.cget("text") == "Clientes"
+    assert barra.btn_inv.cget("text") == "Inventario"
+    assert barra.btn_rep.cget("text") == "Reportes"
+    assert barra.btn_usuarios.cget("text") == "Usuarios"
+    assert "Administrador" in barra.lbl_usuario.cget("text")
+
+    # Restaurar modo completo
+    barra.aplicar_modo_compacto(False)
+    assert barra.es_compacto is False
+    assert barra.lbl_titulo.cget("text") == titulo_orig
+    assert barra.lbl_usuario.cget("text") == usuario_orig
+    for btn, txt in nav_orig.items():
+        assert btn.cget("text") == txt
+
+    _login_como(ui_app, "admin", "admin123")
+
 
 
 
