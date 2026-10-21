@@ -261,6 +261,10 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
 
         cupo_disponible = max(0.0, round(c_limite - c_saldo, 2))
 
+        venc = scoring_service.obtener_vencimiento(c_id, conn)
+        fecha_vencimiento = venc["fecha_vencimiento"] if venc else None
+        dias_para_vencer = venc["dias_para_vencer"] if venc else None
+
         deudores.append({
             "cliente_id": c_id,
             "nombre": c_nombre,
@@ -277,6 +281,8 @@ def obtener_consolidado_cartera(conn: sqlite3.Connection) -> Dict[str, Any]:
             "veto_aplicado": veto_aplicado,
             "banda": banda,
             "estado_banda": etiqueta_banda,
+            "fecha_vencimiento": fecha_vencimiento,
+            "dias_para_vencer": dias_para_vencer,
         })
 
     total_cartera = round(sum(d["saldo_actual"] for d in deudores), 2)

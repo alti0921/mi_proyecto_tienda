@@ -3,6 +3,7 @@ Módulo de explicación en lenguaje natural del puntaje y clasificación crediti
 Función pura independiente de Tkinter y de la base de datos.
 """
 
+from datetime import date, datetime
 from typing import Optional, Dict, Any
 
 MAPA_VINCULOS = {
@@ -63,3 +64,41 @@ def explicar_clase(ev: Dict[str, Any], nivel_vinculo: Optional[str] = None) -> s
     sw3 = round(float(ev["sw3"])) if ev.get("sw3") is not None else 0
 
     return f"Clase {clase_final}: puntaje {score_fmt} (pago {sw1}, frecuencia {sw2}, vínculo {sw3})"
+
+
+def texto_vencimiento(fecha: Optional[Any], dias_para_vencer: Optional[int]) -> str:
+    """
+    Formatea la fecha de vencimiento y los días restantes/mora para visualización.
+    - fecha None -> "Sin saldo pendiente"
+    - dias > 1 -> "DD/MM/AAAA (faltan N días)"; dias == 1 -> "DD/MM/AAAA (falta 1 día)"
+    - dias == 0 -> "DD/MM/AAAA (vence hoy)"
+    - dias == -1 -> "DD/MM/AAAA (vencido hace 1 día)"; dias < -1 -> "DD/MM/AAAA (vencido hace N días)"
+    """
+    if fecha is None:
+        return "Sin saldo pendiente"
+
+    if isinstance(fecha, (date, datetime)):
+        fecha_str = fecha.strftime("%d/%m/%Y")
+    elif isinstance(fecha, str):
+        try:
+            fecha_str = datetime.fromisoformat(fecha).strftime("%d/%m/%Y")
+        except Exception:
+            fecha_str = fecha
+    else:
+        fecha_str = str(fecha)
+
+    d = int(dias_para_vencer) if dias_para_vencer is not None else 0
+
+    if d > 1:
+        sufijo = f"(faltan {d} días)"
+    elif d == 1:
+        sufijo = "(falta 1 día)"
+    elif d == 0:
+        sufijo = "(vence hoy)"
+    elif d == -1:
+        sufijo = "(vencido hace 1 día)"
+    else:
+        sufijo = f"(vencido hace {abs(d)} días)"
+
+    return f"{fecha_str} {sufijo}"
+

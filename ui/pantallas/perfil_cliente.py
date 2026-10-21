@@ -38,7 +38,7 @@ from ui.estilos import (
 )
 from ui.sesion import SesionActual
 from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, DialogoNuevoCliente
-from ui.explicacion_scoring import explicar_clase
+from ui.explicacion_scoring import explicar_clase, texto_vencimiento
 
 
 class PantallaPerfilCliente(tk.Frame):
@@ -368,6 +368,17 @@ class PantallaPerfilCliente(tk.Frame):
         )
         self.lbl_cupo_disp.pack(side=tk.RIGHT, expand=True, anchor="e")
 
+        self.lbl_vencimiento = tk.Label(
+            card_cupo,
+            text="",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_BLANCO,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+            anchor="w",
+            justify=tk.LEFT,
+        )
+        self.lbl_vencimiento.pack(fill=tk.X, pady=(0, 4))
+
         # Sugerencia informativa Cold-Start o de la matriz
         self.lbl_sugerencia_cupo = tk.Label(
             card_cupo,
@@ -613,6 +624,7 @@ class PantallaPerfilCliente(tk.Frame):
         cliente = cxc_service.obtener_cliente(cliente_id, self.sesion.conn)
         if not cliente:
             self.lbl_explicacion_clase.config(text="")
+            self.lbl_vencimiento.config(text="")
             return
 
         self._cliente_actual = cliente
@@ -638,6 +650,8 @@ class PantallaPerfilCliente(tk.Frame):
             text=f"Disponible: ${cliente.cupo_disponible:,.2f}", foreground=cupo_color
         )
 
+        self._actualizar_vencimiento(cliente)
+
         # 3. Recálculo Fresco de Score y Matriz de Decisión (No se cachea)
         self._actualizar_scoring_visual(cliente_id)
 
@@ -654,6 +668,18 @@ class PantallaPerfilCliente(tk.Frame):
         else:
             self.combo_plazo.set("8 días (semanal)")
 
+
+    def _actualizar_vencimiento(self, cliente) -> None:
+        """Actualiza el label de próximo vencimiento según el estado de deuda del cliente."""
+        if cliente and cliente.saldo_actual > 0:
+            venc_info = scoring_service.obtener_vencimiento(cliente.id, self.sesion.conn)
+            if venc_info:
+                txt_v = texto_vencimiento(venc_info["fecha_vencimiento"], venc_info["dias_para_vencer"])
+                self.lbl_vencimiento.config(text=f"Próximo vencimiento: {txt_v}")
+            else:
+                self.lbl_vencimiento.config(text="Sin saldo pendiente")
+        else:
+            self.lbl_vencimiento.config(text="Sin saldo pendiente")
 
     def _actualizar_scoring_visual(self, cliente_id: int) -> None:
         """Calcula de forma fresca e instantánea el score y actualiza los badges."""
@@ -868,6 +894,7 @@ class PantallaPerfilCliente(tk.Frame):
             self.lbl_cupo_disp.config(
                 text=f"Disponible: ${cli_fresco.cupo_disponible:,.2f}", foreground=cupo_color
             )
+            self._actualizar_vencimiento(cli_fresco)
 
             # (c) Recalcular Score y Clase de Riesgo en vivo
             self._actualizar_scoring_visual(cli_fresco.id)
@@ -993,6 +1020,7 @@ class PantallaPerfilCliente(tk.Frame):
             self._cargar_ficha_cliente(cliente_id)
         else:
             self.lbl_explicacion_clase.config(text="")
+            self.lbl_vencimiento.config(text="")
 
     def _filtrar_clientes(self) -> None:
         """Aplica el término de búsqueda de clientes."""

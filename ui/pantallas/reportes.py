@@ -33,6 +33,7 @@ from ui.estilos import (
 )
 from ui.sesion import SesionActual
 from ui.widgets_comunes import AreaError
+from ui.explicacion_scoring import texto_vencimiento
 
 
 class PantallaReportes(tk.Frame):
@@ -429,7 +430,7 @@ class PantallaReportes(tk.Frame):
         frame_tree_cart.grid_rowconfigure(0, weight=1)
         frame_tree_cart.grid_columnconfigure(0, weight=1)
 
-        columnas_cart = ("cliente", "saldo", "dias_mora", "clase", "estado_banda", "cupo_disp")
+        columnas_cart = ("cliente", "saldo", "dias_mora", "clase", "estado_banda", "cupo_disp", "vence")
         self.tree_cartera = ttk.Treeview(
             frame_tree_cart,
             columns=columnas_cart,
@@ -442,6 +443,7 @@ class PantallaReportes(tk.Frame):
         self.tree_cartera.heading("clase", text="Clase")
         self.tree_cartera.heading("estado_banda", text="Estado de Banda")
         self.tree_cartera.heading("cupo_disp", text="Cupo Disponible")
+        self.tree_cartera.heading("vence", text="Vence el")
 
         self.tree_cartera.column("cliente", width=220, anchor=tk.W)
         self.tree_cartera.column("saldo", width=110, anchor=tk.E)
@@ -449,6 +451,7 @@ class PantallaReportes(tk.Frame):
         self.tree_cartera.column("clase", width=65, anchor=tk.CENTER)
         self.tree_cartera.column("estado_banda", width=210, anchor=tk.W)
         self.tree_cartera.column("cupo_disp", width=110, anchor=tk.E)
+        self.tree_cartera.column("vence", width=170, anchor=tk.W)
 
         # Configuración de tags de color para las filas
         self.tree_cartera.tag_configure("clase_A", background=cfg_a["bg"])
@@ -579,6 +582,7 @@ class PantallaReportes(tk.Frame):
             cat = d.get("clase_riesgo", "B")
             cat_display = f"{cat} ({d['veto_aplicado']})" if d.get("veto_aplicado") else cat
             tag_name = f"clase_{cat}"
+            vence_txt = texto_vencimiento(d.get("fecha_vencimiento"), d.get("dias_para_vencer"))
             self.tree_cartera.insert(
                 "",
                 tk.END,
@@ -589,6 +593,7 @@ class PantallaReportes(tk.Frame):
                     cat_display,
                     d.get("estado_banda", "--"),
                     f"${d.get('cupo_disponible', 0.0):,.2f}",
+                    vence_txt,
                 ),
                 tags=(tag_name,),
             )

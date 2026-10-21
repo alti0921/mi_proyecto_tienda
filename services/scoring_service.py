@@ -1,6 +1,8 @@
 import sqlite3
+from datetime import date, datetime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 from models.scoring import ScoringHistorial
+from services.fechas import a_hora_local
 
 # Constantes de negocio: Plazo por defecto y plazos válidos permitidos (RF-CXC-07)
 PLAZO_POR_DEFECTO_DIAS: int = 8
@@ -42,38 +44,23 @@ def clasificar_banda_mora(dias_mora_efectiva: int) -> Tuple[str, str]:
         return ("critica_mas_10", "Cartera Crítica (> 10 días)")
 
 
-def _obtener_dias_transcurridos(cliente_id: int, conn: sqlite3.Connection) -> int:
+def _obtener_cargo_pendiente_mas_antiguo(cliente_id: int, conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
     """
-    Calcula los días transcurridos desde el CARGO PENDIENTE MÁS ANTIGUO del cliente,
-    aplicando imputación FIFO (First In, First Out) de los abonos registrados.
-
-    Regla FIFO:
-    En una microtienda de barrio, los abonos parciales o totales cubren cronológicamente
-    las compras a crédito más antiguas. Un cargo antiguo que ya ha sido completamente
-    saldado por abonos históricos no debe seguir contando como mora activa ni inflar
-    la antigüedad del saldo.
-
-    Algoritmo:
-    1. Si el cliente no existe o saldo_actual <= 0: retorna 0.
-    2. Suma el total de todos los abonos del cliente.
-    3. Acumula en orden cronológico los montos de los cargos. El primer cargo cuya
-       suma acumulada supere total_abonos + 0.01 COP es el cargo pendiente más antiguo.
-    4. Retorna la diferencia en días (truncada a entero, mínimo 0) de ese cargo.
-    5. Si saldo_actual > 0 pero no se identifica ningún cargo pendiente (datos inconsistentes),
-       utiliza el cargo más reciente; si no existen cargos, retorna 0.
+    Identifica el cargo pendiente más antiguo aplicando imputación FIFO de los abonos.
+    Retorna None si el cliente no existe o saldo_actual <= 0.
     """
     cursor = conn.cursor()
     cursor.execute("SELECT saldo_actual FROM clientes WHERE id = ?", (cliente_id,))
     row = cursor.fetchone()
     if not row:
-        return 0
+        return None
 
     saldo_actual = float(row["saldo_actual"] or 0.0)
     if saldo_actual <= 0:
-        return 0
+        return None
 
     cursor.execute("""
-        SELECT tipo_movimiento, monto,
+        SELECT tipo_movimiento, monto, fecha_movimiento,
                (julianday('now') - julianday(fecha_movimiento)) AS dif
         FROM cuentas_por_cobrar
         WHERE cliente_id = ?
@@ -96,16 +83,61 @@ def _obtener_dias_transcurridos(cliente_id: int, conn: sqlite3.Connection) -> in
             break
 
     if cargo_pendiente is not None:
-        dif = cargo_pendiente["dif"]
-        dias = int(dif) if dif is not None else 0
-        return max(0, dias)
+        return cargo_pendiente
 
     if saldo_actual > 0 and cargos:
-        dif = cargos[-1]["dif"]
+        return cargos[-1]
+
+    return None
+
+
+def _obtener_dias_transcurridos(cliente_id: int, conn: sqlite3.Connection) -> int:
+    """
+    Calcula los días transcurridos desde el CARGO PENDIENTE MÁS ANTIGUO del cliente,
+    aplicando imputación FIFO (First In, First Out) de los abonos registrados.
+
+    Regla FIFO:
+    En una microtienda de barrio, los abonos parciales o totales cubren cronológicamente
+    las compras a crédito más antiguas. Un cargo antiguo que ya ha sido completamente
+    saldado por abonos históricos no debe seguir contando como mora activa ni inflar
+    la antigüedad del saldo.
+    """
+    cargo = _obtener_cargo_pendiente_mas_antiguo(cliente_id, conn)
+    if cargo is not None:
+        dif = cargo["dif"]
         dias = int(dif) if dif is not None else 0
         return max(0, dias)
-
     return 0
+
+
+def obtener_vencimiento(cliente_id: int, conn: sqlite3.Connection) -> Optional[dict]:
+    """
+    Calcula el vencimiento del saldo pendiente del cliente con base en el cargo
+    pendiente más antiguo (FIFO) y el plazo pactado (RF-CXC-07).
+    Retorna None si no hay cargo pendiente (saldo <= 0).
+    """
+    cargo = _obtener_cargo_pendiente_mas_antiguo(cliente_id, conn)
+    if cargo is None:
+        return None
+
+    plazo_pactado = obtener_plazo_pactado(cliente_id, conn)
+    dif = cargo["dif"]
+    dias_transcurridos = max(0, int(dif) if dif is not None else 0)
+    dias_para_vencer = plazo_pactado - dias_transcurridos
+
+    fecha_mov = cargo["fecha_movimiento"]
+    fecha_local_str = a_hora_local(fecha_mov)
+    try:
+        dt_local = datetime.fromisoformat(fecha_local_str)
+        fecha_vencimiento = dt_local.date() + timedelta(days=plazo_pactado)
+    except Exception:
+        fecha_vencimiento = None
+
+    return {
+        "fecha_vencimiento": fecha_vencimiento,
+        "dias_para_vencer": dias_para_vencer,
+        "plazo_dias": plazo_pactado,
+    }
 
 
 def obtener_plazo_pactado(cliente_id: int, conn: sqlite3.Connection) -> int:

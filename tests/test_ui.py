@@ -1889,6 +1889,62 @@ def test_perfil_muestra_explicacion_clase(ui_app, crear_cliente_score_alto):
     _login_como(ui_app, "admin", "admin123")
 
 
+def test_vencimiento_en_cartera_y_perfil(ui_app, crear_cliente_score_alto):
+    """
+    Verifica que la fecha y días de vencimiento aparezcan correctamente en la
+    Treeview de Cartera y en la tarjeta de cupo del Perfil de Cliente.
+    """
+    conn = ui_app.sesion.conn
+    _login_como(ui_app, "admin", "admin123")
+
+    # 1. Cliente deudor (cargo pendiente de 5 días, plazo 8)
+    cid_deudor = crear_cliente_score_alto(conn, dias_cargo_pendiente=5)
+
+    # 2. Cliente sin deuda
+    cid_sin_deuda = crear_cliente_score_alto(conn, dias_cargo_pendiente=None)
+
+    # A) Pantalla de Reportes / Cartera
+    ui_app.navegar_a("reportes")
+    rep = ui_app.pantallas["reportes"]
+    rep.notebook.select(rep.tab_cartera)
+    rep._cargar_consolidado_cartera()
+
+    # Comprobar que en tree_cartera existe la columna 'vence'
+    cols = rep.tree_cartera["columns"]
+    assert "vence" in cols
+    assert cols[-1] == "vence"
+
+    # Encontrar al deudor en tree_cartera
+    items = rep.tree_cartera.get_children()
+    fila_deudor = None
+    for item in items:
+        vals = rep.tree_cartera.item(item, "values")
+        if "Cliente Alto 5" in vals[0]:
+            fila_deudor = vals
+            break
+    assert fila_deudor is not None, "El deudor debe figurar en la cartera"
+    texto_vence_cartera = fila_deudor[-1]
+    assert any(sub in texto_vence_cartera for sub in ("faltan", "vence hoy", "vencido"))
+
+    # B) Pantalla de Perfil de Cliente (CxC)
+    ui_app.navegar_a("cxc")
+    cxc_frame = ui_app.pantallas["cxc"]
+
+    # Deudor en Perfil
+    cxc_frame._cargar_selector_clientes(mantener_id=cid_deudor)
+    txt_venc_perfil = cxc_frame.lbl_vencimiento.cget("text")
+    assert txt_venc_perfil.startswith("Próximo vencimiento:")
+    assert any(sub in txt_venc_perfil for sub in ("faltan", "vence hoy", "vencido"))
+
+    # Cliente sin deuda en Perfil
+    cxc_frame._cargar_selector_clientes(mantener_id=cid_sin_deuda)
+    txt_venc_sin_deuda = cxc_frame.lbl_vencimiento.cget("text")
+    assert txt_venc_sin_deuda == "Sin saldo pendiente"
+
+    _login_como(ui_app, "admin", "admin123")
+
+
+
 
 
 

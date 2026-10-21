@@ -11,6 +11,7 @@ from services import (
     evaluar_cold_start,
     registrar_snapshot,
     calcular_mora_efectiva,
+    obtener_vencimiento,
     aplicar_reglas_veto,
     decision_por_clase,
     evaluar_cliente,
@@ -1017,6 +1018,77 @@ def test_v2_2_dominancia_por_valor(db_conn):
 
     sw2 = calcular_sw2(cid, db_conn)
     assert sw2 == 55.0
+
+
+def test_vencimiento_coherente_con_mora(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que obtener_vencimiento sea matemáticamente coherente con calcular_mora_efectiva:
+    max(0, -dias_para_vencer) == calcular_mora_efectiva(cid, conn)
+    y dias_para_vencer == plazo - dias_transcurridos.
+    """
+    for dias_cargo in (2, 8, 16):
+        cid = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=dias_cargo)
+        venc = obtener_vencimiento(cid, db_conn)
+        assert venc is not None
+        assert "fecha_vencimiento" in venc
+        assert venc["plazo_dias"] == 8
+        assert venc["dias_para_vencer"] == 8 - dias_cargo
+        mora = calcular_mora_efectiva(cid, db_conn)
+        assert max(0, -venc["dias_para_vencer"]) == mora
+
+    # Cliente con plazo 15 días y cargo pendiente de 16 días
+    cid15 = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=16)
+    cursor = db_conn.cursor()
+    cursor.execute("UPDATE clientes SET plazo_pactado_dias = 15 WHERE id = ?", (cid15,))
+    db_conn.commit()
+
+    venc15 = obtener_vencimiento(cid15, db_conn)
+    assert venc15 is not None
+    assert venc15["plazo_dias"] == 15
+    assert venc15["dias_para_vencer"] == 15 - 16
+    mora15 = calcular_mora_efectiva(cid15, db_conn)
+    assert max(0, -venc15["dias_para_vencer"]) == mora15
+
+
+def test_vencimiento_fifo_y_sin_saldo(db_conn, crear_cliente_score_alto):
+    """
+    Verifica que clientes sin deuda retornen None en obtener_vencimiento,
+    y que con imputación FIFO el vencimiento corresponda al cargo pendiente más antiguo no cubierto.
+    """
+    # 1. Cliente sin deuda
+    cid_sin_saldo = crear_cliente_score_alto(db_conn, dias_cargo_pendiente=None)
+    assert obtener_vencimiento(cid_sin_saldo, db_conn) is None
+
+    # 2. Cliente con cargo antiguo saldado y nuevo pendiente
+    cursor = db_conn.cursor()
+    cursor.execute("""
+        INSERT INTO clientes (nombre, limite_credito, saldo_actual, score_crediticio, categoria_riesgo, plazo_pactado_dias)
+        VALUES ('Cliente FIFO Vencimiento', 100000.0, 5000.0, 70, 'B', 8)
+    """)
+    cid = cursor.lastrowid
+
+    # Cargo antiguo de hace 30 días
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 10000.0, 10000.0, datetime('now', '-30 days'))
+    """, (cid,))
+    # Abono de hace 20 días que cubre completamente el primer cargo
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'abono', 10000.0, 0.0, datetime('now', '-20 days'))
+    """, (cid,))
+    # Nuevo cargo de hace 3 días
+    cursor.execute("""
+        INSERT INTO cuentas_por_cobrar (cliente_id, tipo_movimiento, monto, saldo_resultante, fecha_movimiento)
+        VALUES (?, 'cargo', 5000.0, 5000.0, datetime('now', '-3 days'))
+    """, (cid,))
+    db_conn.commit()
+
+    venc = obtener_vencimiento(cid, db_conn)
+    assert venc is not None
+    assert venc["dias_para_vencer"] == 5
+    assert venc["plazo_dias"] == 8
+
 
 
 

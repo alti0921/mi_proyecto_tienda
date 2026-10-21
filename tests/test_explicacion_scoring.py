@@ -2,7 +2,8 @@
 Pruebas unitarias para la función pura de explicación en lenguaje natural del scoring.
 """
 
-from ui.explicacion_scoring import explicar_clase
+from datetime import date
+from ui.explicacion_scoring import explicar_clase, texto_vencimiento
 
 
 def test_explicacion_normal_y_veto():
@@ -92,3 +93,35 @@ def test_explicacion_cold_start():
     }
     res_cs_2 = explicar_clase(ev_cs_2, nivel_vinculo="solo_apodo")
     assert "le falta 1 ciclo" in res_cs_2
+
+
+def test_texto_vencimiento():
+    """
+    Verifica los diferentes formatos de salida de texto_vencimiento:
+    None, faltan N días, falta 1 día, vence hoy, vencido hace 1 día, vencido hace N días.
+    """
+    # 1. Caso sin saldo / fecha None
+    assert texto_vencimiento(None, None) == "Sin saldo pendiente"
+
+    f = date(2026, 10, 25)
+
+    # 2. Faltan N días (d > 1)
+    res_n = texto_vencimiento(f, 4)
+    assert res_n == "25/10/2026 (faltan 4 días)"
+
+    # 3. Falta 1 día (d == 1)
+    res_1 = texto_vencimiento(f, 1)
+    assert res_1 == "25/10/2026 (falta 1 día)"
+
+    # 4. Vence hoy (d == 0)
+    res_0 = texto_vencimiento(f, 0)
+    assert res_0 == "25/10/2026 (vence hoy)"
+
+    # 5. Vencido hace 1 día (d == -1)
+    res_m1 = texto_vencimiento(f, -1)
+    assert res_m1 == "25/10/2026 (vencido hace 1 día)"
+
+    # 6. Vencido hace N días (d < -1)
+    res_mn = texto_vencimiento(f, -6)
+    assert res_mn == "25/10/2026 (vencido hace 6 días)"
+
