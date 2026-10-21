@@ -37,7 +37,15 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, DialogoNuevoCliente
+from ui.widgets_comunes import (
+    AreaError,
+    BotonRestringidoPorRol,
+    DialogoNuevoCliente,
+    MarcoDesplazable,
+    ajustar_wraplength,
+    configurar_columnas,
+    agregar_scroll_horizontal,
+)
 from ui.explicacion_scoring import explicar_clase, texto_vencimiento
 
 
@@ -67,8 +75,8 @@ class PantallaPerfilCliente(tk.Frame):
 
         # Grid principal: Barra superior de búsqueda y dos columnas de trabajo
         self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1, uniform="cols")
+        self.grid_columnconfigure(1, weight=1, uniform="cols")
 
         self._crear_barra_superior_busqueda()
         self._crear_columna_izquierda()
@@ -90,6 +98,8 @@ class PantallaPerfilCliente(tk.Frame):
             pady=8,
         )
         frame_top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 6))
+        frame_top.columnconfigure(1, weight=3)
+        frame_top.columnconfigure(2, weight=2)
 
         lbl_buscar = tk.Label(
             frame_top,
@@ -98,44 +108,42 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
         )
-        lbl_buscar.pack(side=tk.LEFT, padx=(0, 8))
+        lbl_buscar.grid(row=0, column=0, sticky="w", padx=(0, 8))
 
-        self.combo_clientes = ttk.Combobox(frame_top, state="readonly", width=36)
-        self.combo_clientes.pack(side=tk.LEFT, padx=(0, 10))
+        self.combo_clientes = ttk.Combobox(frame_top, state="readonly", width=28)
+        self.combo_clientes.grid(row=0, column=1, sticky="ew", padx=(0, 10))
         self.combo_clientes.bind("<<ComboboxSelected>>", self._on_cliente_seleccionado)
 
-        self.entry_buscar_termino = ttk.Entry(frame_top, width=22)
-        self.entry_buscar_termino.pack(side=tk.LEFT, padx=(0, 6))
+        self.entry_buscar_termino = ttk.Entry(frame_top, width=18)
+        self.entry_buscar_termino.grid(row=0, column=2, sticky="ew", padx=(0, 6))
         self.entry_buscar_termino.bind("<KeyRelease>", lambda e: self._filtrar_clientes())
         self.entry_buscar_termino.bind("<Return>", lambda e: self._filtrar_clientes())
 
         btn_buscar = ttk.Button(
             frame_top, text="🔍 Buscar", command=self._filtrar_clientes
         )
-        btn_buscar.pack(side=tk.LEFT, padx=(0, 4))
+        btn_buscar.grid(row=0, column=3, sticky="w", padx=(0, 4))
 
         btn_limpiar = ttk.Button(
             frame_top, text="Limpiar", command=self._limpiar_busqueda_clientes
         )
-        btn_limpiar.pack(side=tk.LEFT, padx=(0, 12))
+        btn_limpiar.grid(row=0, column=4, sticky="w", padx=(0, 12))
 
         btn_nuevo_cliente = ttk.Button(
             frame_top,
             text="➕ Nuevo Cliente",
             command=self._abrir_modal_nuevo_cliente,
         )
-        btn_nuevo_cliente.pack(side=tk.RIGHT)
+        btn_nuevo_cliente.grid(row=0, column=5, sticky="e")
 
     # =========================================================================
     # COLUMNA IZQUIERDA: DATOS DEMOGRÁFICOS, SCORING Y GESTIÓN DE CUPO
     # =========================================================================
 
     def _crear_columna_izquierda(self) -> None:
-        col_izq = tk.Frame(self, background=COLOR_FONDO_APP)
-        col_izq.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=(0, 10))
-        col_izq.grid_rowconfigure(0, weight=0)  # Datos demográficos
-        col_izq.grid_rowconfigure(1, weight=0)  # Scoring en vivo
-        col_izq.grid_rowconfigure(2, weight=1)  # Asignación de cupo
+        self.marco_izq = MarcoDesplazable(self, background=COLOR_FONDO_APP)
+        self.marco_izq.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=(0, 10))
+        col_izq = self.marco_izq.interior
         col_izq.grid_columnconfigure(0, weight=1)
 
         # ---------------------------------------------------------------------
@@ -157,8 +165,10 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
+            justify=tk.LEFT,
         )
-        lbl_tit_datos.pack(anchor="w", pady=(0, 6))
+        lbl_tit_datos.pack(fill=tk.X, anchor="w", pady=(0, 6))
+        ajustar_wraplength(lbl_tit_datos)
 
         # Campos
         frame_grid_datos = tk.Frame(card_datos, background=COLOR_BLANCO)
@@ -213,7 +223,7 @@ class PantallaPerfilCliente(tk.Frame):
         self.var_activo = tk.BooleanVar(value=True)
         self.chk_activo = ttk.Checkbutton(
             frame_grid_datos,
-            text="Cliente Activo en el Sistema",
+            text="Cliente activo",
             variable=self.var_activo,
         )
         self.chk_activo.grid(row=4, column=1, sticky="w", pady=4, padx=(6, 0))
@@ -226,8 +236,10 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_EXITO,
             font=FUENTE_BASE_BOLD,
+            justify=tk.LEFT,
         )
-        self.lbl_exito_datos.pack(anchor="w", pady=(2, 0))
+        self.lbl_exito_datos.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_datos)
 
         # Botón Guardar Datos Demográficos (Completamente independiente)
         self.btn_guardar_datos = ttk.Button(
@@ -256,8 +268,10 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
+            justify=tk.LEFT,
         )
-        lbl_tit_scoring.pack(anchor="w", pady=(0, 4))
+        lbl_tit_scoring.pack(fill=tk.X, anchor="w", pady=(0, 4))
+        ajustar_wraplength(lbl_tit_scoring)
 
         frame_score_header = tk.Frame(self.card_scoring, background=COLOR_BLANCO)
         frame_score_header.pack(fill=tk.X, pady=(2, 4))
@@ -269,7 +283,7 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_PRIMARIO,
         )
-        self.lbl_score_valor.pack(side=tk.LEFT)
+        self.lbl_score_valor.pack(anchor="w")
 
         self.lbl_badge_clase = tk.Label(
             frame_score_header,
@@ -280,7 +294,7 @@ class PantallaPerfilCliente(tk.Frame):
             padx=10,
             pady=4,
         )
-        self.lbl_badge_clase.pack(side=tk.RIGHT)
+        self.lbl_badge_clase.pack(anchor="w", pady=(4, 0))
 
         self.lbl_explicacion_clase = tk.Label(
             self.card_scoring,
@@ -289,9 +303,9 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
             justify=tk.LEFT,
-            wraplength=480,
         )
-        self.lbl_explicacion_clase.pack(anchor="w", pady=(2, 2))
+        self.lbl_explicacion_clase.pack(fill=tk.X, anchor="w", pady=(2, 2))
+        ajustar_wraplength(self.lbl_explicacion_clase)
 
         self.lbl_decision_accion = tk.Label(
             self.card_scoring,
@@ -299,10 +313,10 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_BASE,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_SECUNDARIO,
-            wraplength=480,
             justify=tk.LEFT,
         )
-        self.lbl_decision_accion.pack(anchor="w", pady=(2, 4))
+        self.lbl_decision_accion.pack(fill=tk.X, anchor="w", pady=(2, 4))
+        ajustar_wraplength(self.lbl_decision_accion)
 
         # Desglose de Factores (SW1, SW2, SW3)
         self.lbl_factores = tk.Label(
@@ -313,7 +327,8 @@ class PantallaPerfilCliente(tk.Frame):
             foreground=COLOR_TEXTO_MUTED,
             justify=tk.LEFT,
         )
-        self.lbl_factores.pack(anchor="w")
+        self.lbl_factores.pack(fill=tk.X, anchor="w")
+        ajustar_wraplength(self.lbl_factores)
 
         # ---------------------------------------------------------------------
         # Card 3: Asignación de Cupo (RF-CXC-05, RF-SCR-02) (Solo Admin)
@@ -334,10 +349,12 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
+            justify=tk.LEFT,
         )
-        lbl_tit_cupo.pack(anchor="w", pady=(0, 4))
+        lbl_tit_cupo.pack(fill=tk.X, anchor="w", pady=(0, 4))
+        ajustar_wraplength(lbl_tit_cupo)
 
-        # Métricas de crédito
+        # Métricas de crédito en 3 filas
         frame_metricas = tk.Frame(card_cupo, background=COLOR_BLANCO)
         frame_metricas.pack(fill=tk.X, pady=(2, 6))
 
@@ -348,7 +365,7 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
         )
-        self.lbl_limite_actual.pack(side=tk.LEFT, expand=True, anchor="w")
+        self.lbl_limite_actual.grid(row=0, column=0, sticky="w", pady=1)
 
         self.lbl_saldo_actual = tk.Label(
             frame_metricas,
@@ -357,7 +374,7 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground="#c0392b",
         )
-        self.lbl_saldo_actual.pack(side=tk.LEFT, expand=True, anchor="center")
+        self.lbl_saldo_actual.grid(row=1, column=0, sticky="w", pady=1)
 
         self.lbl_cupo_disp = tk.Label(
             frame_metricas,
@@ -366,7 +383,7 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground="#27ae60",
         )
-        self.lbl_cupo_disp.pack(side=tk.RIGHT, expand=True, anchor="e")
+        self.lbl_cupo_disp.grid(row=2, column=0, sticky="w", pady=1)
 
         self.lbl_vencimiento = tk.Label(
             card_cupo,
@@ -378,6 +395,7 @@ class PantallaPerfilCliente(tk.Frame):
             justify=tk.LEFT,
         )
         self.lbl_vencimiento.pack(fill=tk.X, pady=(0, 4))
+        ajustar_wraplength(self.lbl_vencimiento)
 
         # Sugerencia informativa Cold-Start o de la matriz
         self.lbl_sugerencia_cupo = tk.Label(
@@ -388,51 +406,50 @@ class PantallaPerfilCliente(tk.Frame):
             foreground="#2980b9",
             padx=8,
             pady=4,
-            wraplength=480,
             justify=tk.LEFT,
         )
         self.lbl_sugerencia_cupo.pack(fill=tk.X, pady=(2, 6))
+        ajustar_wraplength(self.lbl_sugerencia_cupo)
 
-        # Campo y botón para confirmar cupo (Separado y Restringido a Admin)
+        # Campo y botón para confirmar cupo (Separado y Restringido a Admin) en grid de 3 filas
         frame_input_cupo = tk.Frame(card_cupo, background=COLOR_BLANCO)
         frame_input_cupo.pack(fill=tk.X, pady=(4, 6))
+        frame_input_cupo.columnconfigure(1, weight=1)
 
         tk.Label(
             frame_input_cupo,
             text="Nuevo Límite ($):",
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
-        ).pack(side=tk.LEFT, padx=(0, 6))
+        ).grid(row=0, column=0, sticky="w", pady=2, padx=(0, 6))
 
-        self.entry_nuevo_cupo = ttk.Entry(frame_input_cupo, width=14, font=("Segoe UI", 10))
-        self.entry_nuevo_cupo.pack(side=tk.LEFT, padx=(0, 8))
+        self.entry_nuevo_cupo = ttk.Entry(frame_input_cupo, font=("Segoe UI", 10))
+        self.entry_nuevo_cupo.grid(row=0, column=1, sticky="ew", pady=2)
 
         tk.Label(
             frame_input_cupo,
             text="Plazo:",
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
-        ).pack(side=tk.LEFT, padx=(4, 6))
+        ).grid(row=1, column=0, sticky="w", pady=2, padx=(0, 6))
 
         self.combo_plazo = ttk.Combobox(
             frame_input_cupo,
             state="readonly",
             values=["8 días (semanal)", "15 días (quincenal)"],
-            width=18,
         )
         self.combo_plazo.set("8 días (semanal)")
-        self.combo_plazo.pack(side=tk.LEFT, padx=(0, 8))
+        self.combo_plazo.grid(row=1, column=1, sticky="ew", pady=2)
 
-        # Reutilización obligatoria de BotonRestringidoPorRol
         self.btn_asignar_cupo = BotonRestringidoPorRol(
             frame_input_cupo,
             sesion=self.sesion,
             roles_permitidos=["admin"],
-            text="🔒 Confirmar Cupo y Plazo (Admin)",
+            text="🔒 Confirmar cupo y plazo",
             style="Primary.TButton",
             command=self._asignar_cupo,
         )
-        self.btn_asignar_cupo.pack(side=tk.LEFT)
+        self.btn_asignar_cupo.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Mensajes de asignación de cupo
         self.area_error_cupo = AreaError(card_cupo)
@@ -442,8 +459,10 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_EXITO,
             font=FUENTE_BASE_BOLD,
+            justify=tk.LEFT,
         )
-        self.lbl_exito_cupo.pack(anchor="w", pady=(2, 0))
+        self.lbl_exito_cupo.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        ajustar_wraplength(self.lbl_exito_cupo)
 
         self.lbl_solo_admin_cupo = tk.Label(
             card_cupo,
@@ -451,25 +470,27 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_PEQUENA,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_MUTED,
+            justify=tk.LEFT,
         )
-        self.lbl_solo_admin_cupo.pack(anchor="w", pady=(2, 0))
+        self.lbl_solo_admin_cupo.pack(fill=tk.X, anchor="w", pady=(2, 0))
+        ajustar_wraplength(self.lbl_solo_admin_cupo)
 
     # =========================================================================
     # COLUMNA DERECHA: REGISTRO DE ABONO E HISTORIAL APPEND-ONLY (RF-CXC-04, 06)
     # =========================================================================
 
     def _crear_columna_derecha(self) -> None:
-        col_der = tk.Frame(self, background=COLOR_FONDO_APP)
-        col_der.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=(0, 10))
-        col_der.grid_rowconfigure(0, weight=0)  # Registro de abono
-        col_der.grid_rowconfigure(1, weight=1)  # Historial de movimientos
-        col_der.grid_columnconfigure(0, weight=1)
+        self.col_der = tk.Frame(self, background=COLOR_FONDO_APP)
+        self.col_der.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=(0, 10))
+        self.col_der.grid_rowconfigure(0, weight=0)  # Registro de abono
+        self.col_der.grid_rowconfigure(1, weight=1)  # Historial de movimientos
+        self.col_der.grid_columnconfigure(0, weight=1)
 
         # ---------------------------------------------------------------------
         # Card 4: Registro de Abonos a Cuenta (RF-CXC-04)
         # ---------------------------------------------------------------------
         card_abono = tk.Frame(
-            col_der,
+            self.col_der,
             background=COLOR_BLANCO,
             highlightbackground=COLOR_BORDE_NEUTRAL,
             highlightthickness=1,
@@ -484,8 +505,10 @@ class PantallaPerfilCliente(tk.Frame):
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
+            justify=tk.LEFT,
         )
-        lbl_tit_abono.pack(anchor="w", pady=(0, 6))
+        lbl_tit_abono.pack(fill=tk.X, anchor="w", pady=(0, 6))
+        ajustar_wraplength(lbl_tit_abono)
 
         frame_grid_abono = tk.Frame(card_abono, background=COLOR_BLANCO)
         frame_grid_abono.pack(fill=tk.X)
@@ -520,14 +543,16 @@ class PantallaPerfilCliente(tk.Frame):
             background=COLOR_BLANCO,
             foreground=COLOR_EXITO,
             font=FUENTE_BASE_BOLD,
-            wraplength=480,
             justify=tk.LEFT,
         )
-        self.lbl_exito_abono.pack(anchor="w", pady=(2, 4))
+        self.lbl_exito_abono.pack(fill=tk.X, anchor="w", pady=(2, 4))
+        ajustar_wraplength(self.lbl_exito_abono)
 
-        # Botones de Abono y Comprobante
+        # Botones de Abono y Comprobante (en 2 columnas con weight=1)
         frame_btns_abono = tk.Frame(card_abono, background=COLOR_BLANCO)
         frame_btns_abono.pack(fill=tk.X, pady=(4, 0))
+        frame_btns_abono.columnconfigure(0, weight=1)
+        frame_btns_abono.columnconfigure(1, weight=1)
 
         self.btn_registrar_abono = ttk.Button(
             frame_btns_abono,
@@ -535,20 +560,20 @@ class PantallaPerfilCliente(tk.Frame):
             style="Success.TButton",
             command=self._registrar_abono,
         )
-        self.btn_registrar_abono.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_registrar_abono.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         self.btn_comprobante = ttk.Button(
             frame_btns_abono,
-            text="🧾 Comprobante del movimiento seleccionado",
+            text="🧾 Ver comprobante PDF",
             command=self._ver_comprobante,
         )
-        self.btn_comprobante.pack(side=tk.LEFT)
+        self.btn_comprobante.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         # ---------------------------------------------------------------------
         # Card 5: Historial de Movimientos CxC (Append-Only) (RF-CXC-06)
         # ---------------------------------------------------------------------
         card_historial = tk.Frame(
-            col_der,
+            self.col_der,
             background=COLOR_BLANCO,
             highlightbackground=COLOR_BORDE_NEUTRAL,
             highlightthickness=1,
@@ -561,12 +586,14 @@ class PantallaPerfilCliente(tk.Frame):
 
         lbl_tit_historial = tk.Label(
             card_historial,
-            text="📜 Historial de Movimientos CxC (Inmutable / Append-Only)",
+            text="📜 Historial de movimientos (no editable)",
             font=FUENTE_SUBTITULO,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
+            justify=tk.LEFT,
         )
-        lbl_tit_historial.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        lbl_tit_historial.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ajustar_wraplength(lbl_tit_historial)
 
         # Treeview de Historial estrictamente de solo lectura (Sin eventos de mutación)
         frame_tree_h = tk.Frame(card_historial, background=COLOR_BLANCO)
@@ -589,14 +616,26 @@ class PantallaPerfilCliente(tk.Frame):
         self.tree_historial.heading("cajero", text="Cajero")
         self.tree_historial.heading("descripcion", text="Descripción / Referencia")
 
-        self.tree_historial.column("id", width=35, anchor=tk.CENTER)
-        self.tree_historial.column("fecha", width=125, anchor=tk.CENTER)
-        self.tree_historial.column("tipo", width=70, anchor=tk.CENTER)
-        self.tree_historial.column("monto", width=85, anchor=tk.E)
-        self.tree_historial.column("saldo", width=105, anchor=tk.E)
-        self.tree_historial.column("cajero", width=110, anchor=tk.W)
-        self.tree_historial.column("descripcion", width=150, anchor=tk.W)
+        self.tree_historial.column("id", anchor=tk.CENTER)
+        self.tree_historial.column("fecha", anchor=tk.CENTER)
+        self.tree_historial.column("tipo", anchor=tk.CENTER)
+        self.tree_historial.column("monto", anchor=tk.E)
+        self.tree_historial.column("saldo", anchor=tk.E)
+        self.tree_historial.column("cajero", anchor=tk.W)
+        self.tree_historial.column("descripcion", anchor=tk.W)
 
+        configurar_columnas(
+            self.tree_historial,
+            {
+                "id": (40, 30),
+                "fecha": (130, 110),
+                "tipo": (75, 60),
+                "monto": (90, 70),
+                "saldo": (110, 85),
+                "cajero": (115, 90),
+                "descripcion": (160, 120),
+            },
+        )
 
         scroll_h = ttk.Scrollbar(
             frame_tree_h, orient="vertical", command=self.tree_historial.yview
@@ -604,6 +643,10 @@ class PantallaPerfilCliente(tk.Frame):
         self.tree_historial.configure(yscrollcommand=scroll_h.set)
         self.tree_historial.grid(row=0, column=0, sticky="nsew")
         scroll_h.grid(row=0, column=1, sticky="ns")
+
+        self.scroll_h_historial = agregar_scroll_horizontal(
+            self.tree_historial, frame_tree_h, row=1, column=0
+        )
 
     # =========================================================================
     # LÓGICA DE CARGA Y ACTUALIZACIÓN EN VIVO (SCORING Y ESTADO)

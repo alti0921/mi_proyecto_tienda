@@ -3,11 +3,19 @@ import sys
 import sqlite3
 import pytest
 import tkinter as tk
+from tkinter import font
 from datetime import datetime, timezone
 
 from models.usuario import Usuario
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError, BotonRestringidoPorRol, BarraSuperior, DialogoNuevoCliente
+from ui.widgets_comunes import (
+    AreaError,
+    BotonRestringidoPorRol,
+    BarraSuperior,
+    DialogoNuevoCliente,
+    MarcoDesplazable,
+)
+from ui.estilos import FUENTE_BASE_BOLD
 from ui.app import App
 from ui.pantallas.login import PantallaLogin
 from ui.pantallas.pos import PantallaPOS
@@ -2031,6 +2039,134 @@ def test_barra_modo_compacto_restaura_textos(ui_app):
         assert btn.cget("text") == txt
 
     _login_como(ui_app, "admin", "admin123")
+
+
+def test_perfil_cupo_alcanzable_en_ventana_pequena(ui_app):
+    """
+    Verifica que en el tamaño mínimo real (ui_app.minsize()), con un cliente cargado,
+    la sección de asignación de cupo (btn_asignar_cupo) quede visible dentro del canvas
+    tras desplazar marco_izq al final.
+    """
+    ui_app.deiconify()
+    geom_original = ui_app.geometry()
+    try:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("cxc")
+        cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+
+        # Cargar un cliente si no hay uno cargado
+        if cxc_frame._cliente_actual is None:
+            primer_id = next(iter(cxc_frame._clientes_map.values()), 1)
+            cxc_frame._cargar_ficha_cliente(primer_id)
+        ui_app.update()
+
+        min_w, min_h = ui_app.minsize()
+        ui_app.geometry(f"{min_w}x{min_h}")
+        ui_app.update()
+
+        assert hasattr(cxc_frame, "marco_izq")
+        assert isinstance(cxc_frame.marco_izq, MarcoDesplazable)
+
+        # Desplazar al final
+        cxc_frame.marco_izq.desplazar_al_final()
+        ui_app.update()
+
+        btn_top = cxc_frame.btn_asignar_cupo.winfo_rooty()
+        btn_bottom = btn_top + cxc_frame.btn_asignar_cupo.winfo_height()
+        canvas_top = cxc_frame.marco_izq.canvas.winfo_rooty()
+        canvas_bottom = canvas_top + cxc_frame.marco_izq.canvas.winfo_height()
+
+        assert btn_bottom <= canvas_bottom
+        assert btn_top >= canvas_top
+    finally:
+        ui_app.geometry(geom_original)
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_perfil_textos_usan_el_ancho_disponible(ui_app):
+    """
+    En el tamaño mínimo de ventana, comprueba que:
+    - lbl_explicacion_clase.cget('wraplength') sea >= 60% del ancho de card_scoring.
+    - El ancho de marco_izq esté entre 0.8 y 1.25 veces el ancho de la columna derecha (col_der).
+    """
+    ui_app.deiconify()
+    geom_original = ui_app.geometry()
+    try:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("cxc")
+        cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+
+        if cxc_frame._cliente_actual is None:
+            primer_id = next(iter(cxc_frame._clientes_map.values()), 1)
+            cxc_frame._cargar_ficha_cliente(primer_id)
+
+        min_w, min_h = ui_app.minsize()
+        ui_app.geometry(f"{min_w}x{min_h}")
+        ui_app.update()
+
+        wrap = int(cxc_frame.lbl_explicacion_clase.cget("wraplength"))
+        ancho_card = cxc_frame.card_scoring.winfo_width()
+        assert wrap >= 0.60 * ancho_card
+
+        ancho_izq = cxc_frame.marco_izq.winfo_width()
+        ancho_der = cxc_frame.col_der.winfo_width()
+        ratio = ancho_izq / ancho_der
+        assert 0.80 <= ratio <= 1.25
+    finally:
+        ui_app.geometry(geom_original)
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_tablas_con_columnas_estirables(ui_app):
+    """
+    Verifica que las tablas principales (tree_historial, tree_cartera, tree_arqueo)
+    cuenten con barras de desplazamiento horizontal expuestas y que sus columnas
+    estén configuradas con estiramiento (stretch=True) y minwidth >= ancho medido de su encabezado.
+    """
+    ui_app.deiconify()
+    _login_como(ui_app, "admin", "admin123")
+    fuente_enc = font.Font(font=FUENTE_BASE_BOLD)
+
+    # 1. Perfil del cliente: tree_historial
+    ui_app.navegar_a("cxc")
+    cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+    ui_app.update()
+    assert hasattr(cxc_frame, "scroll_h_historial")
+    assert cxc_frame.scroll_h_historial.winfo_exists()
+    for col in cxc_frame.tree_historial["columns"]:
+        col_info = cxc_frame.tree_historial.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(cxc_frame.tree_historial.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
+
+    # 2. Reportes: tree_cartera y tree_arqueo
+    ui_app.navegar_a("reportes")
+    rep_frame: PantallaReportes = ui_app.pantallas["reportes"]
+    ui_app.update()
+
+    assert hasattr(rep_frame, "scroll_h_cartera")
+    assert rep_frame.scroll_h_cartera.winfo_exists()
+    for col in rep_frame.tree_cartera["columns"]:
+        col_info = rep_frame.tree_cartera.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(rep_frame.tree_cartera.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
+
+    assert hasattr(rep_frame, "scroll_h_arqueo")
+    assert rep_frame.scroll_h_arqueo.winfo_exists()
+    for col in rep_frame.tree_arqueo["columns"]:
+        col_info = rep_frame.tree_arqueo.column(col)
+        assert bool(col_info["stretch"]) is True
+        assert col_info["minwidth"] > 0
+        txt = str(rep_frame.tree_arqueo.heading(col, "text") or "")
+        if txt:
+            assert col_info["minwidth"] >= fuente_enc.measure(txt)
 
 
 

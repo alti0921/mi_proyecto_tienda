@@ -32,7 +32,12 @@ from ui.estilos import (
     PAD_INTERNO,
 )
 from ui.sesion import SesionActual
-from ui.widgets_comunes import AreaError
+from ui.widgets_comunes import (
+    AreaError,
+    ajustar_wraplength,
+    configurar_columnas,
+    agregar_scroll_horizontal,
+)
 from ui.explicacion_scoring import texto_vencimiento
 
 
@@ -100,21 +105,24 @@ class PantallaReportes(tk.Frame):
         )
         frame_controles.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
+        frame_fila_controles_a = tk.Frame(frame_controles, background=COLOR_BLANCO)
+        frame_fila_controles_a.pack(fill=tk.X)
+
         tk.Label(
-            frame_controles,
+            frame_fila_controles_a,
             text="📅 Fecha de Cierre (YYYY-MM-DD):",
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_PRINCIPAL,
         ).pack(side=tk.LEFT, padx=(0, 6))
 
-        self.entry_fecha_arqueo = ttk.Entry(frame_controles, width=12, font=("Segoe UI", 10))
+        self.entry_fecha_arqueo = ttk.Entry(frame_fila_controles_a, width=12, font=("Segoe UI", 10))
         self.entry_fecha_arqueo.insert(0, date.today().strftime("%Y-%m-%d"))
         self.entry_fecha_arqueo.pack(side=tk.LEFT, padx=(0, 6))
         self.entry_fecha_arqueo.bind("<Return>", lambda e: self._cargar_arqueo_diario())
 
         btn_hoy = ttk.Button(
-            frame_controles,
+            frame_fila_controles_a,
             text="Hoy",
             width=5,
             command=self._establecer_fecha_hoy,
@@ -122,7 +130,7 @@ class PantallaReportes(tk.Frame):
         btn_hoy.pack(side=tk.LEFT, padx=(0, 8))
 
         btn_refrescar_a = ttk.Button(
-            frame_controles,
+            frame_fila_controles_a,
             text="🔄 Consultar Arqueo",
             style="Primary.TButton",
             command=self._cargar_arqueo_diario,
@@ -135,8 +143,10 @@ class PantallaReportes(tk.Frame):
             font=FUENTE_PEQUENA,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_MUTED,
+            justify=tk.LEFT,
         )
-        self.lbl_estado_arqueo.pack(side=tk.RIGHT)
+        self.lbl_estado_arqueo.pack(fill=tk.X, anchor="w", pady=(4, 0))
+        ajustar_wraplength(self.lbl_estado_arqueo)
 
         # B. Tarjetas KPI de Resumen de Caja (5 Métricas)
         frame_kpis = tk.Frame(self.tab_arqueo, background=COLOR_FONDO_APP)
@@ -209,13 +219,26 @@ class PantallaReportes(tk.Frame):
         self.tree_arqueo.heading("caja", text="Ingreso a Caja")
         self.tree_arqueo.heading("descripcion", text="Detalle / Cliente")
 
-        self.tree_arqueo.column("id", width=90, anchor=tk.CENTER)
-        self.tree_arqueo.column("hora", width=125, anchor=tk.CENTER)
-        self.tree_arqueo.column("tipo", width=170, anchor=tk.W)
-        self.tree_arqueo.column("metodo", width=80, anchor=tk.CENTER)
-        self.tree_arqueo.column("monto", width=95, anchor=tk.E)
-        self.tree_arqueo.column("caja", width=95, anchor=tk.E)
-        self.tree_arqueo.column("descripcion", width=260, anchor=tk.W)
+        self.tree_arqueo.column("id", anchor=tk.CENTER)
+        self.tree_arqueo.column("hora", anchor=tk.CENTER)
+        self.tree_arqueo.column("tipo", anchor=tk.W)
+        self.tree_arqueo.column("metodo", anchor=tk.CENTER)
+        self.tree_arqueo.column("monto", anchor=tk.E)
+        self.tree_arqueo.column("caja", anchor=tk.E)
+        self.tree_arqueo.column("descripcion", anchor=tk.W)
+
+        configurar_columnas(
+            self.tree_arqueo,
+            {
+                "id": (80, 60),
+                "hora": (150, 140),
+                "tipo": (150, 110),
+                "metodo": (80, 60),
+                "monto": (90, 70),
+                "caja": (110, 85),
+                "descripcion": (240, 160),
+            },
+        )
 
         scroll_arq = ttk.Scrollbar(
             frame_tree_arq, orient="vertical", command=self.tree_arqueo.yview
@@ -223,6 +246,10 @@ class PantallaReportes(tk.Frame):
         self.tree_arqueo.configure(yscrollcommand=scroll_arq.set)
         self.tree_arqueo.grid(row=1, column=0, sticky="nsew")
         scroll_arq.grid(row=1, column=1, sticky="ns")
+
+        self.scroll_h_arqueo = agregar_scroll_horizontal(
+            self.tree_arqueo, frame_tree_arq, row=2, column=0
+        )
 
     def _crear_kpi_card(
         self,
@@ -365,8 +392,11 @@ class PantallaReportes(tk.Frame):
         )
         frame_filtros_cartera.grid(row=1, column=0, sticky="ew", pady=(0, 8))
 
+        frame_fila_controles = tk.Frame(frame_filtros_cartera, background=COLOR_BLANCO)
+        frame_fila_controles.pack(fill=tk.X)
+
         tk.Label(
-            frame_filtros_cartera,
+            frame_fila_controles,
             text="🔍 Filtrar por Clase:",
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
@@ -374,7 +404,7 @@ class PantallaReportes(tk.Frame):
         ).pack(side=tk.LEFT, padx=(0, 4))
 
         self.combo_filtro_clase = ttk.Combobox(
-            frame_filtros_cartera,
+            frame_fila_controles,
             values=["Todas", "Clase A", "Clase B", "Clase C", "Clase D"],
             state="readonly",
             width=12,
@@ -384,7 +414,7 @@ class PantallaReportes(tk.Frame):
         self.combo_filtro_clase.bind("<<ComboboxSelected>>", lambda e: self._aplicar_filtros_cartera_en_memoria())
 
         tk.Label(
-            frame_filtros_cartera,
+            frame_fila_controles,
             text="Rango de Mora:",
             font=FUENTE_BASE_BOLD,
             background=COLOR_BLANCO,
@@ -392,7 +422,7 @@ class PantallaReportes(tk.Frame):
         ).pack(side=tk.LEFT, padx=(0, 4))
 
         self.combo_filtro_mora = ttk.Combobox(
-            frame_filtros_cartera,
+            frame_fila_controles,
             values=["Todos", "0 a 3 días", "4 a 6 días", "7 a 10 días", "> 10 días"],
             state="readonly",
             width=15,
@@ -402,7 +432,7 @@ class PantallaReportes(tk.Frame):
         self.combo_filtro_mora.bind("<<ComboboxSelected>>", lambda e: self._aplicar_filtros_cartera_en_memoria())
 
         btn_refrescar_c = ttk.Button(
-            frame_filtros_cartera,
+            frame_fila_controles,
             text="🔄 Refrescar Cartera",
             command=self._cargar_consolidado_cartera,
         )
@@ -414,8 +444,10 @@ class PantallaReportes(tk.Frame):
             font=FUENTE_PEQUENA,
             background=COLOR_BLANCO,
             foreground=COLOR_TEXTO_MUTED,
+            justify=tk.LEFT,
         )
-        self.lbl_conteo_filtro.pack(side=tk.RIGHT)
+        self.lbl_conteo_filtro.pack(fill=tk.X, anchor="w", pady=(4, 0))
+        ajustar_wraplength(self.lbl_conteo_filtro)
 
         # C. Tabla de Deudores (Treeview solo lectura)
         frame_tree_cart = tk.Frame(
@@ -445,13 +477,26 @@ class PantallaReportes(tk.Frame):
         self.tree_cartera.heading("cupo_disp", text="Cupo Disponible")
         self.tree_cartera.heading("vence", text="Vence el")
 
-        self.tree_cartera.column("cliente", width=220, anchor=tk.W)
-        self.tree_cartera.column("saldo", width=110, anchor=tk.E)
-        self.tree_cartera.column("dias_mora", width=120, anchor=tk.CENTER)
-        self.tree_cartera.column("clase", width=65, anchor=tk.CENTER)
-        self.tree_cartera.column("estado_banda", width=210, anchor=tk.W)
-        self.tree_cartera.column("cupo_disp", width=110, anchor=tk.E)
-        self.tree_cartera.column("vence", width=170, anchor=tk.W)
+        self.tree_cartera.column("cliente", anchor=tk.W)
+        self.tree_cartera.column("saldo", anchor=tk.E)
+        self.tree_cartera.column("dias_mora", anchor=tk.CENTER)
+        self.tree_cartera.column("clase", anchor=tk.CENTER)
+        self.tree_cartera.column("estado_banda", anchor=tk.W)
+        self.tree_cartera.column("cupo_disp", anchor=tk.E)
+        self.tree_cartera.column("vence", anchor=tk.W)
+
+        configurar_columnas(
+            self.tree_cartera,
+            {
+                "cliente": (200, 140),
+                "saldo": (100, 80),
+                "dias_mora": (110, 85),
+                "clase": (65, 50),
+                "estado_banda": (190, 130),
+                "cupo_disp": (100, 80),
+                "vence": (240, 190),
+            },
+        )
 
         # Configuración de tags de color para las filas
         self.tree_cartera.tag_configure("clase_A", background=cfg_a["bg"])
@@ -465,6 +510,10 @@ class PantallaReportes(tk.Frame):
         self.tree_cartera.configure(yscrollcommand=scroll_cart.set)
         self.tree_cartera.grid(row=0, column=0, sticky="nsew")
         scroll_cart.grid(row=0, column=1, sticky="ns")
+
+        self.scroll_h_cartera = agregar_scroll_horizontal(
+            self.tree_cartera, frame_tree_cart, row=1, column=0
+        )
 
     def _crear_banda_card(
         self,
@@ -488,13 +537,16 @@ class PantallaReportes(tk.Frame):
         )
         card.grid(row=0, column=col, sticky="nsew", padx=3)
 
-        tk.Label(
+        lbl_tit = tk.Label(
             card,
             text=titulo,
             font=FUENTE_BASE_BOLD,
             background=bg_color,
             foreground=fg_color,
-        ).pack(anchor="w")
+            justify=tk.LEFT,
+        )
+        lbl_tit.pack(fill=tk.X, anchor="w")
+        ajustar_wraplength(lbl_tit)
 
         lbl_monto = tk.Label(
             card,

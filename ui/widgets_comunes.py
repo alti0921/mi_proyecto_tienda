@@ -1,7 +1,7 @@
 import sqlite3
 import tkinter as tk
-from tkinter import ttk
-from typing import Callable, List, Optional
+from tkinter import ttk, font
+from typing import Callable, Dict, List, Optional, Tuple
 
 from models.cliente import Cliente
 from services import cxc_service
@@ -20,6 +20,7 @@ from ui.estilos import (
     FUENTE_BOTON,
     PAD_CAMPOS,
     PAD_INTERNO,
+    px,
 )
 from ui.sesion import SesionActual
 
@@ -439,4 +440,165 @@ class DialogoNuevoCliente(tk.Toplevel):
                 self.al_crear(nuevo)
         except ValueError as e:
             self.area_error.mostrar_error(str(e))
+
+
+class MarcoDesplazable(tk.Frame):
+    """
+    Marco con desplazamiento vertical compuesto por un Canvas y un Scrollbar vertical.
+    Contiene un frame interior público (self.interior) para colocar los widgets secundarios.
+    - El ancho de self.interior sigue al ancho del canvas.
+    - Se actualiza automáticamente el scrollregion ante cambios de tamaño de self.interior.
+    - La barra vertical se muestra solo si el contenido supera la altura del canvas.
+    - Soporta la rueda del ratón en Windows solo mientras el puntero está sobre el componente.
+    - Provee desplazar_al_final() para posicionar la vista al final del contenido.
+    """
+
+    def __init__(self, parent: tk.Widget, background: Optional[str] = None, *args, **kwargs):
+        super().__init__(parent, background=background, *args, **kwargs)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(
+            self,
+            background=background,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.scrollbar = ttk.Scrollbar(
+            self,
+            orient="vertical",
+            command=self.canvas.yview,
+        )
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.interior = tk.Frame(self.canvas, background=background)
+        self._window_id = self.canvas.create_window((0, 0), window=self.interior, anchor="nw")
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self._scrollbar_visible = False
+
+        self.canvas.bind("<Configure>", self._al_configurar_canvas)
+        self.interior.bind("<Configure>", self._al_configurar_interior)
+
+        self.bind("<Enter>", self._al_entrar)
+        self.bind("<Leave>", self._al_salir)
+        self.bind("<Destroy>", self._al_destruir, add="+")
+
+    def _al_entrar(self, event=None) -> None:
+        self.bind_all("<MouseWheel>", self._al_mousewheel)
+
+    def _al_salir(self, event=None) -> None:
+        if event is not None:
+            try:
+                x, y = self.winfo_pointerxy()
+                widget_bajo_cursor = self.winfo_containing(x, y)
+                if widget_bajo_cursor is not None:
+                    w = widget_bajo_cursor
+                    while w:
+                        if w == self:
+                            return
+                        w = getattr(w, "master", None)
+            except Exception:
+                pass
+        try:
+            self.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+
+    def _al_destruir(self, event=None) -> None:
+        try:
+            self.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+
+    def _al_mousewheel(self, event) -> None:
+        if self.canvas.winfo_exists():
+            self.canvas.yview_scroll(-int(event.delta / 120), "units")
+
+    def _al_configurar_canvas(self, event) -> None:
+        self.canvas.itemconfigure(self._window_id, width=event.width)
+        self._actualizar_visibilidad_scrollbar()
+
+    def _al_configurar_interior(self, event=None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self._actualizar_visibilidad_scrollbar()
+
+    def _actualizar_visibilidad_scrollbar(self) -> None:
+        req_h = self.interior.winfo_reqheight()
+        canvas_h = self.canvas.winfo_height()
+        if canvas_h > 1 and req_h > canvas_h:
+            if not self._scrollbar_visible:
+                self.scrollbar.grid(row=0, column=1, sticky="ns")
+                self._scrollbar_visible = True
+        else:
+            if self._scrollbar_visible:
+                self.scrollbar.grid_remove()
+                self._scrollbar_visible = False
+
+    def desplazar_al_final(self) -> None:
+        """Posiciona la vista vertical al final del contenido desplazable."""
+        self.update_idletasks()
+        self.canvas.yview_moveto(1.0)
+
+
+def ajustar_wraplength(label: tk.Label, margen_px: int = 8) -> None:
+    """
+    Configura el Label con alineación a la izquierda (anchor='w', justify=tk.LEFT)
+    y enlaza el evento <Configure> para que su wraplength se adapte dinámicamente
+    al ancho disponible del widget menos el margen especificado.
+
+    NOTA: Funciona correctamente cuando el Label ocupa todo el ancho de su contenedor
+    (empaquetado con pack(fill=tk.X, anchor="w") o grid(sticky="ew")).
+    """
+    label.configure(anchor="w", justify=tk.LEFT)
+
+    def _al_redimensionar(event):
+        nuevo_wrap = max(px(120), event.width - px(margen_px))
+        try:
+            actual_wrap = int(label.cget("wraplength"))
+        except Exception:
+            actual_wrap = 0
+        if abs(actual_wrap - nuevo_wrap) > 2:
+            label.configure(wraplength=nuevo_wrap)
+
+    label.bind("<Configure>", _al_redimensionar, add="+")
+
+
+def configurar_columnas(
+    tree: ttk.Treeview,
+    especificacion: Dict[str, Tuple[int, int]],
+) -> None:
+    """
+    Configura el ancho escalado por DPI, el ancho mínimo y la capacidad de estiramiento
+    (stretch=True) para las columnas indicadas en un Treeview.
+    El minwidth real de cada columna es el mayor entre px(ancho_minimo) y el ancho
+    del texto del encabezado medido con FUENTE_BASE_BOLD más px(16) para que nunca salga cortado.
+    especificacion = {columna: (ancho_base, ancho_minimo)}
+    """
+    fuente_encabezado = font.Font(font=FUENTE_BASE_BOLD)
+    for col, (ancho_base, ancho_minimo) in especificacion.items():
+        try:
+            texto_encabezado = str(tree.heading(col, "text") or "")
+        except Exception:
+            texto_encabezado = ""
+        ancho_encabezado = fuente_encabezado.measure(texto_encabezado) + px(16) if texto_encabezado else 0
+        min_real = max(px(ancho_minimo), ancho_encabezado)
+        width_real = max(px(ancho_base), min_real)
+        tree.column(col, width=width_real, minwidth=min_real, stretch=True)
+
+
+def agregar_scroll_horizontal(
+    tree: ttk.Treeview,
+    parent: tk.Widget,
+    row: int,
+    column: int,
+) -> ttk.Scrollbar:
+    """
+    Crea y ubica mediante grid una Scrollbar horizontal vinculada al xview del Treeview.
+    Retorna la instancia de la barra de desplazamiento.
+    """
+    scroll_h = ttk.Scrollbar(parent, orient="horizontal", command=tree.xview)
+    tree.configure(xscrollcommand=scroll_h.set)
+    scroll_h.grid(row=row, column=column, sticky="ew")
+    return scroll_h
 
