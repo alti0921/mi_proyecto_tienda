@@ -429,7 +429,9 @@ class PantallaInventario(tk.Frame):
         self.entry_edit_codigo.grid(row=5, column=1, sticky="ew", pady=2, padx=(6, 0))
 
         # Mensajes de error y confirmación
-        self.area_error_edit = AreaError(parent)
+        self.contenedor_error_edit = tk.Frame(parent, background=COLOR_BLANCO)
+        self.contenedor_error_edit.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.area_error_edit = AreaError(self.contenedor_error_edit)
         self.lbl_exito_edit = tk.Label(parent, text="", background=COLOR_BLANCO, foreground=COLOR_EXITO, font=FUENTE_BASE_BOLD)
         self.lbl_exito_edit.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(2, 0))
         ajustar_wraplength(self.lbl_exito_edit)
@@ -502,7 +504,9 @@ class PantallaInventario(tk.Frame):
         self.entry_crear_codigo.grid(row=6, column=1, sticky="ew", pady=2, padx=(6, 0))
 
         # Mensajes
-        self.area_error_crear = AreaError(parent)
+        self.contenedor_error_crear = tk.Frame(parent, background=COLOR_BLANCO)
+        self.contenedor_error_crear.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.area_error_crear = AreaError(self.contenedor_error_crear)
         self.lbl_exito_crear = tk.Label(parent, text="", background=COLOR_BLANCO, foreground=COLOR_EXITO, font=FUENTE_BASE_BOLD)
         self.lbl_exito_crear.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(2, 0))
         ajustar_wraplength(self.lbl_exito_crear)

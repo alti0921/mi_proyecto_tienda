@@ -2475,5 +2475,117 @@ def test_cambio_voluntario_de_contrasena_no_redirige(ui_app):
         ui_app.update()
 
 
+def test_report_callback_exception_registra_y_avisa(ui_app, tmp_path, monkeypatch):
+    """
+    Verifica que report_callback_exception registre el traceback en errores.log
+    dentro de carpeta_datos() y muestre un messagebox sin cerrar la aplicación.
+    """
+    monkeypatch.setattr("ui.app.carpeta_datos", lambda: str(tmp_path))
+    avisos = []
+    monkeypatch.setattr("ui.app.messagebox.showerror", lambda tit, msg: avisos.append((tit, msg)))
+
+    try:
+        raise RuntimeError("Error de prueba en callback de interfaz")
+    except RuntimeError:
+        exc_type, exc_val, exc_tb = sys.exc_info()
+        ui_app.report_callback_exception(exc_type, exc_val, exc_tb)
+
+    log_path = tmp_path / "errores.log"
+    assert log_path.exists()
+    contenido = log_path.read_text(encoding="utf-8")
+    assert "Error de prueba en callback de interfaz" in contenido
+    assert "RuntimeError" in contenido
+
+    assert len(avisos) == 1
+    assert avisos[0][0] == "Error Inesperado"
+    assert "Ocurrió un error inesperado. La aplicación sigue abierta. El detalle quedó en:" in avisos[0][1]
+    assert str(log_path) in avisos[0][1]
+
+
+def test_inventario_editar_sin_seleccion_muestra_error(ui_app):
+    """
+    Verifica que en Inventario, sin producto seleccionado, al llamar _guardar_edicion()
+    como admin no se lance excepción, area_error_edit esté visible (winfo_ismapped tras update)
+    y su mensaje no esté vacío.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("inventario")
+        ui_app.update()
+
+        inv: PantallaInventario = ui_app.pantallas["inventario"]
+        inv.notebook.select(inv.tab_editar)
+        inv._producto_seleccionado = None
+        inv._guardar_edicion()
+        ui_app.update()
+
+        assert inv.area_error_edit.tiene_error() is True
+        assert inv.area_error_edit.winfo_ismapped()
+        assert len(inv.area_error_edit._mensaje_actual) > 0
+        assert "Seleccione un producto para editar." in inv.area_error_edit._mensaje_actual
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_inventario_crear_invalido_muestra_error(ui_app):
+    """
+    Verifica que en la pestaña Crear de Inventario, con el nombre de producto vacío,
+    al llamar _crear_producto() no se lance excepción, area_error_crear esté visible
+    (winfo_ismapped tras update) y su mensaje no esté vacío.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("inventario")
+        ui_app.update()
+
+        inv: PantallaInventario = ui_app.pantallas["inventario"]
+        inv.notebook.select(inv.tab_crear)
+        inv.entry_crear_nombre.delete(0, tk.END)
+        inv._crear_producto()
+        ui_app.update()
+
+        assert inv.area_error_crear.tiene_error() is True
+        assert inv.area_error_crear.winfo_ismapped()
+        assert len(inv.area_error_crear._mensaje_actual) > 0
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_todas_las_areas_error_se_pueden_mostrar(ui_app):
+    """
+    Recorre recursivamente todos los widgets de todas las pantallas de ui_app
+    y verifica que para cada instancia de AreaError, llamar mostrar_error("prueba"),
+    update() y luego limpiar() no lance ninguna excepción (e.g. TclError por geometry manager).
+    """
+    areas_encontradas = []
+
+    def buscar_areas_error(widget):
+        if isinstance(widget, AreaError):
+            areas_encontradas.append(widget)
+        for child in widget.winfo_children():
+            buscar_areas_error(child)
+
+    for pantalla in ui_app.pantallas.values():
+        buscar_areas_error(pantalla)
+
+    assert len(areas_encontradas) == 10
+    for area in areas_encontradas:
+        area.mostrar_error("prueba")
+        ui_app.update()
+        assert area.tiene_error() is True
+        assert area._mensaje_actual == "prueba"
+        area.limpiar()
+        ui_app.update()
+        assert area.tiene_error() is False
+
+
+
+
 
 

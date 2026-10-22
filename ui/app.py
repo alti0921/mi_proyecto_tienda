@@ -1,11 +1,16 @@
+import os
 import sys
 import ctypes
 import sqlite3
+import traceback
+from datetime import datetime
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from typing import Dict, Optional, Any
 
 from db.connection import get_connection
+from db.rutas import es_ejecutable, ruta_base_datos, carpeta_datos
+from scripts.inicializar_base_tienda import preparar_base_datos
 from ui.estilos import COLOR_FONDO_APP, configurar_estilos, px
 from ui.sesion import SesionActual
 from ui.widgets_comunes import BarraSuperior
@@ -199,6 +204,18 @@ class App(tk.Tk):
         self.sesion.cerrar_sesion()
         self.navegar_a("login")
 
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """Captura excepciones no manejadas en callbacks de Tkinter sin cerrar la aplicación."""
+        detalle = "".join(traceback.format_exception(exc, val, tb))
+        log_path = _registrar_error(detalle)
+        try:
+            messagebox.showerror(
+                "Error Inesperado",
+                f"Ocurrió un error inesperado. La aplicación sigue abierta. El detalle quedó en: {log_path}",
+            )
+        except Exception:
+            pass
+
     def destroy(self) -> None:
         """Cierre ordenado de la aplicación y de la conexión a base de datos."""
         try:
@@ -209,19 +226,54 @@ class App(tk.Tk):
         super().destroy()
 
 
+def _registrar_error(detalle: str) -> str:
+    """Registra el detalle del error en carpeta_datos()/errores.log y retorna la ruta del archivo."""
+    log_dir = carpeta_datos()
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "errores.log")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] Error:\n{detalle}\n" + "=" * 50 + "\n")
+    except Exception:
+        pass
+    return log_path
+
+
 def main() -> None:
     """Punto de entrada principal con reconocimiento de DPI de Windows antes de crear la ventana Tk."""
-    if sys.platform == "win32":
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:
-            try:
-                ctypes.windll.user32.SetProcessDPIAware()
-            except Exception:
-                pass
+    try:
+        if es_ejecutable() and not os.path.exists(ruta_base_datos()):
+            preparar_base_datos(ruta_base_datos())
 
-    app = App()
-    app.mainloop()
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            except Exception:
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+
+        app = App()
+        app.mainloop()
+    except Exception as e:
+        detalle = traceback.format_exc()
+        log_path = _registrar_error(detalle)
+
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Error Crítico",
+                f"Ocurrió un error y la aplicación debe cerrarse. El detalle quedó en: {log_path}",
+            )
+            root.destroy()
+        except Exception:
+            pass
+
+        if not es_ejecutable():
+            raise
 
 
 if __name__ == "__main__":

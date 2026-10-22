@@ -120,9 +120,46 @@ La aplicación abre maximizada y se adapta a cualquier tamaño de pantalla y esc
 
 ---
 
-## 7. Ejecución de la Suite de Pruebas Automatizadas
+## 7. Generar el Ejecutable (.exe) para una Tienda
 
-El proyecto cuenta con una cobertura integral de **192 pruebas automatizadas** que validan la capa de seguridad, integridad contable, motor analítico heurístico, reglas de veto, persistencia en UTC con presentación en hora local, scripts de rendimiento y reactividad de la interfaz gráfica.
+El sistema permite generar un paquete de distribución ejecutable autónomo para sistemas Windows mediante PyInstaller sin requerir que la tienda cliente instale Python o dependencias adicionales.
+
+### 1. Instalación de dependencias de empaquetado
+```bash
+pip install -r requirements-dev.txt
+# o directamente: pip install pyinstaller
+```
+
+### 2. Generación del ejecutable
+```bash
+pyinstaller MiTienda.spec
+```
+
+### 3. Ubicación y despliegue del binario
+El proceso genera el paquete en:
+```text
+dist/MiTienda/MiTienda.exe
+```
+Para distribuir la aplicación en un equipo de producción, basta copiar la carpeta `dist/MiTienda/` completa o generar un acceso directo al ejecutable `MiTienda.exe`.
+
+### 4. Persistencia de datos y operación en producción
+- **Ubicación de datos:** Cuando la aplicación corre como ejecutable, almacena sus datos mutables de manera completamente aislada en:
+  ```text
+  %LOCALAPPDATA%\MiTienda\
+  ```
+  Allí se resguardan de forma segura:
+  - `tienda.db`: Base de datos SQLite operativa de la tienda.
+  - `*.bak-*`: Respaldos automáticos creados antes de aplicar migraciones estructurales.
+  - `comprobantes/`: Directorio donde se guardan los comprobantes PDF en formato térmico 80 mm generados en CxC.
+  - `errores.log`: Registro cronológico detallado de excepciones fatales no controladas.
+- **Primer arranque automático:** La primera vez que se ejecuta el binario en una máquina virgen (donde no existe `%LOCALAPPDATA%\MiTienda\tienda.db`), el sistema invoca `preparar_base_datos()` creando automáticamente la base limpia con el usuario `admin` y contraseña inicial obligatoria `tienda123`. Al ingresar, el sistema exige de inmediato el cambio de contraseña por motivos de seguridad antes de permitir acceso a cualquier función.
+- **Copia de seguridad y respaldo:** Dado que todos los datos mutables y contables residen dentro de `%LOCALAPPDATA%\MiTienda\`, para respaldar completamente la tienda basta con copiar dicha carpeta a una unidad externa o servicio de copias de seguridad.
+
+---
+
+## 8. Ejecución de la Suite de Pruebas Automatizadas
+
+El proyecto cuenta con una cobertura integral de **200 pruebas automatizadas** que validan la capa de seguridad, integridad contable, motor analítico heurístico, reglas de veto, persistencia en UTC con presentación en hora local, scripts de rendimiento y reactividad de la interfaz gráfica.
 
 Para correr toda la suite con detalle de ejecución:
 
@@ -130,25 +167,26 @@ Para correr toda la suite con detalle de ejecución:
 pytest -v
 ```
 
-### Distribución de la Suite (192 Tests):
+### Distribución de la Suite (200 Tests):
 - `tests/test_auth.py` (17 tests): Hashing seguro SHA-256 + salt, verificación resistente a timing attacks (`hmac.compare_digest`), autenticación case-insensitive (`COLLATE NOCASE`), cambio de contraseña con validación de contraseña actual y longitud mínima (6 caracteres), protección contra desactivación del último administrador activo (RF-AUT-03), validación de contraseña inicial de tienda y creación de usuario administrador inicial.
 - `tests/test_cxc.py` (15 tests): Inmutabilidad append-only contra triggers SQL, control de límites de cupo (RF-CXC-06), prevención de saldos negativos, actualización de vínculo, persistencia auditable de `usuario_id` y `cajero_nombre` en cargos y abonos, soporte de plazo pactado (8/15 días) (RF-CXC-07).
 - `tests/test_estilos.py` (1 test): Conversión de píxeles según la escala de pantalla (`factor_escala`, `px`).
 - `tests/test_explicacion_scoring.py` (3 tests): Textos de la explicación de la clase (normal, veto y arranque en frío) y del vencimiento.
 - `tests/test_fechas.py` (2 tests): Conversión de marcas de tiempo UTC almacenadas por SQLite a la zona horaria local del sistema (`a_hora_local`), manejo de valores nulos, cadenas vacías y entradas inválidas.
-- `tests/test_inicializar_base_tienda.py` (4 tests): Inicialización de base limpia para tienda real sin datos semilla (0 registros), prevención estricta de sobreescritura, verificación de esquema con migraciones al día y reversión limpia ante fallos.
+- `tests/test_inicializar_base_tienda.py` (5 tests): Inicialización de base limpia para tienda real sin datos semilla (0 registros), prevención estricta de sobreescritura, verificación de esquema con migraciones al día, reversión limpia ante fallos y preparación idempotente (`preparar_base_datos`).
 - `tests/test_inventario.py` (13 tests): Unicidad de códigos de barra, redondeo direccional conservador (`math.floor` en salidas / `math.ceil` en entradas), baja lógica con `ValueError`, alertas de stock mínimo.
 - `tests/test_migraciones.py` (3 tests): Verificación de claves foráneas activas, migración segura de bases de datos legadas con respaldo automático previo (`.bak`) e idempotencia ante bases sin inicializar.
 - `tests/test_pos.py` (15 tests): Orquestador atómico, bloqueo de ventas a crédito en Clase D (RF-SCR-03), regla de desbloqueo Clase C mediante abono $\ge 50\%$ (RF-SCR-04), transaccionalidad compuesta `auto_commit=False`, propagación de `usuario_id` al ledger, asignación de cupo con plazo pactado y reglas de veto R1/R2.
 - `tests/test_rendimiento_script.py` (2 tests): Ejecución del script de medición de rendimiento bajo base de datos temporal con volúmenes reducidos (verificación de 5 operaciones, consistencia de `COUNT(*)`) y rechazo estricto contra la base de producción `db/tienda.db`.
 - `tests/test_reportes.py` (13 tests): Consolidación de arqueo de caja física agrupado por día en hora local (`strftime(..., 'localtime')`), clasificación de bandas de mora según Matriz de Scoring v2.1, emisión de comprobantes en PDF térmico 80mm del movimiento seleccionado con cajero registrado y hora local, encabezado del comprobante sin datos inventados, pie según el tipo de movimiento y nombres largos sin recortar.
+- `tests/test_rutas.py` (3 tests): Resolución pura de rutas de datos y recursos en modo desarrollo y ejecutable empaquetado (PyInstaller), almacenamiento de comprobantes en directorio configurable.
 - `tests/test_scoring.py` (41 tests): Motor analítico heurístico completo (Matriz v2.1), mora efectiva con referencia FIFO (ignora cargos saldados), reglas de veto R1 (mora efectiva de 7 a 10 días $\rightarrow$ como máximo Clase C) y R2 (mora > 10 días $\rightarrow$ Clase D), predominancia de categorías por valor comprado (V2.2), protocolo Cold-Start con plazo pactado (8/15 días) y graduación por 3 ciclos de pago oportunos, y sugerencia de aumento de cupo (+20%) para clientes Clase A (RF-SCR-05), y fecha de vencimiento del saldo coherente con la mora efectiva.
-- `tests/test_ui.py` (61 tests): Ciclo de vida de sesión, componentes visuales reactivos (`AreaError`, `BotonRestringidoPorRol`), alta de clientes desde POS con diálogo común (`DialogoNuevoCliente`), adición de producto al carrito con tecla Enter en $\le 2$ interacciones (RF-POS-01), sugerencia de +20% aplicable solo tras confirmación explícita, visualización de reglas de veto en POS y perfil, panel de gestión de usuarios (Pantalla 6), cambio obligatorio de contraseña inicial de tienda, cambio de contraseña voluntario sin redirección forzada y comprobantes PDF del movimiento seleccionado, explicación de la clase, vencimiento en perfil y cartera, barra superior en modo compacto y visibilidad de los controles en el tamaño mínimo de ventana.
+- `tests/test_ui.py` (65 tests): Ciclo de vida de sesión, componentes visuales reactivos (`AreaError`, `BotonRestringidoPorRol`), alta de clientes desde POS con diálogo común (`DialogoNuevoCliente`), adición de producto al carrito con tecla Enter en $\le 2$ interacciones (RF-POS-01), sugerencia de +20% aplicable solo tras confirmación explícita, visualización de reglas de veto en POS y perfil, panel de gestión de usuarios (Pantalla 6), cambio obligatorio de contraseña inicial de tienda, cambio de contraseña voluntario sin redirección forzada y comprobantes PDF del movimiento seleccionado, explicación de la clase, vencimiento en perfil y cartera, barra superior en modo compacto, visibilidad de los controles en el tamaño mínimo de ventana, captura segura de excepciones en callbacks de interfaz con registro en log y visualización garantizada de áreas de error en formularios con grid.
 - `tests/test_widgets_comunes.py` (2 tests): Marco desplazable y ajuste del ancho de los textos.
 
 ---
 
-## 8. Medición de Rendimiento (RNF-03)
+## 9. Medición de Rendimiento (RNF-03)
 
 El sistema incluye una herramienta automatizada de evaluación de desempeño contra los umbrales de tiempo de respuesta exigidos en el requisito no funcional **RNF-03** ($\le 500$ milisegundos para operaciones transaccionales clave). El umbral de 500 ms aplica a las operaciones individuales (inventario, saldo y scoring de un cliente); el consolidado de cartera se mide solo como referencia analítica e informativa.
 
@@ -163,13 +201,14 @@ python -m scripts.medir_rendimiento
 
 ---
 
-## 9. Estructura del Repositorio
+## 10. Estructura del Repositorio
 
 ```text
 mi_proyecto_tienda/
 ├── db/
 │   ├── connection.py            # Conexión SQLite con PRAGMA foreign_keys = ON y migraciones
 │   ├── migraciones.py           # Migraciones seguras no destructivas con respaldo automático (.bak)
+│   ├── rutas.py                 # Resolución de rutas dinámicas (desarrollo vs. empaquetado PyInstaller)
 │   ├── schema.sql               # DDL con 7 tablas, checks, triggers append-only e índices
 │   └── seeds_test.sql           # Datos semilla para pruebas y desarrollo
 ├── models/                      # Dataclasses puras de dominio
@@ -205,7 +244,7 @@ mi_proyecto_tienda/
 │   ├── __init__.py
 │   ├── inicializar_base_tienda.py # Inicialización de base limpia para tienda real (sin semillas)
 │   └── medir_rendimiento.py     # Medición automatizada RNF-03 bajo base temporal
-├── tests/                       # Suite completa de pruebas automatizadas (192 tests)
+├── tests/                       # Suite completa de pruebas automatizadas (200 tests)
 │   ├── conftest.py              # Fixtures compartidas y semillas en memoria
 │   ├── test_auth.py
 │   ├── test_cxc.py
@@ -218,6 +257,7 @@ mi_proyecto_tienda/
 │   ├── test_pos.py
 │   ├── test_rendimiento_script.py
 │   ├── test_reportes.py
+│   ├── test_rutas.py
 │   ├── test_scoring.py
 │   ├── test_ui.py
 │   └── test_widgets_comunes.py
@@ -228,13 +268,16 @@ mi_proyecto_tienda/
 │       ├── matriz_scoring.md
 │       ├── paso1_modelo_bd.md
 │       └── LEEME.md
-├── .gitignore                   # Exclusiones de Git (bases .db, respaldos .bak, reportes temporales, capturas de diagnóstico)
+├── .gitignore                   # Exclusiones de Git (bases .db, respaldos .bak, reportes temporales, capturas de diagnóstico, build/, dist/)
+├── MiTienda.spec                # Especificación de empaquetado para PyInstaller (onedir, noconsole)
+├── requirements.txt             # Dependencias del proyecto para producción/desarrollo
+├── requirements-dev.txt         # Dependencias para empaquetado y testing
 └── README.md                    # Guía general de instalación, uso y arquitectura
 ```
 
 ---
 
-## 10. Documentación Técnica de Referencia
+## 11. Documentación Técnica de Referencia
 
 La documentación oficial y actualizada del sistema corresponde a la suite de documentos **Versión 2.2** en formato `.docx` entregada como parte del proyecto de grado (no incluida en este repositorio):
 - **ERS v2.2 (Especificación de Requisitos del Sistema, IEEE-830)**

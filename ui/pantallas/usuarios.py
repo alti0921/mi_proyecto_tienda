@@ -222,9 +222,9 @@ class PantallaUsuarios(tk.Frame):
         self.entry_nuevo_password.grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=3)
 
         # Mensajes y botón de creación
-        frame_error_admin = tk.Frame(card_alta, background=COLOR_BLANCO)
-        frame_error_admin.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        self.area_error_admin = AreaError(frame_error_admin)
+        self.contenedor_error_admin = tk.Frame(card_alta, background=COLOR_BLANCO)
+        self.contenedor_error_admin.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.area_error_admin = AreaError(self.contenedor_error_admin)
 
         self.lbl_exito_admin = tk.Label(
             card_alta,

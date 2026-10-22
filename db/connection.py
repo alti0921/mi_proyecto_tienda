@@ -1,8 +1,9 @@
 import sqlite3
 import os
 from db.migraciones import aplicar_migraciones
+from db.rutas import ruta_base_datos
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "tienda.db")
+DB_PATH = ruta_base_datos()
 
 def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     """

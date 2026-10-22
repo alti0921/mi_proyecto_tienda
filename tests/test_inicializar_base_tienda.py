@@ -105,3 +105,31 @@ def test_falla_no_deja_archivo(tmp_path, monkeypatch):
 
     assert not os.path.exists(db_file)
 
+
+def test_preparar_base_datos_crea_y_no_sobrescribe(tmp_path):
+    """
+    Verifica que preparar_base_datos cree la base limpia en la primera llamada devolviendo True,
+    y que en la segunda llamada devuelva False preservando idéntico el contenido del archivo.
+    """
+    from scripts.inicializar_base_tienda import preparar_base_datos
+
+    db_file = str(tmp_path / "tienda_preparada.db")
+
+    # Primera llamada: debe crear la base limpia y retornar True
+    creada = preparar_base_datos(db_file)
+    assert creada is True
+    assert os.path.exists(db_file)
+
+    with open(db_file, "rb") as f:
+        bytes_primera = f.read()
+
+    # Segunda llamada: la base ya existe, debe retornar False y no alterar el archivo
+    segunda = preparar_base_datos(db_file)
+    assert segunda is False
+
+    with open(db_file, "rb") as f:
+        bytes_segunda = f.read()
+
+    assert bytes_segunda == bytes_primera
+
+

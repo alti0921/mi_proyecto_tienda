@@ -7,4 +7,6 @@ diagnostico_*.txt
 db/*.bak-*
 scripts/resultados_rendimiento.csv
 capturas_diag/
-
+build/
+dist/
+db/errores.log

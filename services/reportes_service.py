@@ -11,6 +11,7 @@ from reportlab.lib.utils import simpleSplit
 import services.scoring_service as scoring_service
 from services.scoring_service import clasificar_banda_mora
 from services.fechas import a_hora_local
+from db.rutas import carpeta_comprobantes
 
 
 def obtener_arqueo_diario(
@@ -390,8 +391,8 @@ def generar_comprobante_pdf(
 
     # Ruta de destino
     if ruta_salida is None:
-        temp_dir = tempfile.gettempdir()
-        ruta_salida = os.path.join(temp_dir, f"comprobante_cxc_{movimiento_id:06d}.pdf")
+        directorio = carpeta_comprobantes()
+        ruta_salida = os.path.join(directorio, f"comprobante_cxc_{movimiento_id:06d}.pdf")
     else:
         ruta_salida = os.path.abspath(ruta_salida)
 

@@ -2,7 +2,19 @@ import os
 import sqlite3
 import argparse
 from db.migraciones import aplicar_migraciones
+from db.rutas import ruta_recursos
 from services.auth_service import crear_usuario, CONTRASENA_INICIAL_TIENDA
+
+
+def preparar_base_datos(ruta: str) -> bool:
+    """
+    Crea la base de datos limpia con un administrador inicial si el archivo no existe.
+    Devuelve True si creó la base; si ya existe no la toca y devuelve False.
+    """
+    if os.path.exists(ruta):
+        return False
+    inicializar_base_tienda(ruta)
+    return True
 
 
 def inicializar_base_tienda(ruta_db: str) -> None:
@@ -18,8 +30,7 @@ def inicializar_base_tienda(ruta_db: str) -> None:
     if directorio:
         os.makedirs(directorio, exist_ok=True)
 
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    schema_path = os.path.join(base_dir, "db", "schema.sql")
+    schema_path = ruta_recursos("db", "schema.sql")
 
     conn = None
     archivo_creado = False
