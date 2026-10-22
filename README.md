@@ -66,11 +66,21 @@ pip install pytest reportlab
 
 ## 4. Inicialización y Sembrado de la Base de Datos
 
-El sistema almacena sus datos en `db/tienda.db`. Para inicializar de forma segura la base de datos sin riesgo de sobreescribir datos existentes, ejecuta el siguiente comando:
+### Base de datos de prueba (desarrollo y testing local)
+El sistema almacena sus datos en `db/tienda.db`. Para inicializar de forma segura la base de datos de desarrollo con datos semilla (`db/seeds_test.sql`, usuarios `admin/admin123` y `vendedor/vend123`, productos y clientes de prueba) sin riesgo de sobreescribir datos existentes, ejecuta el siguiente comando:
 
 ```bash
 python -c "import os, sqlite3; p='db/tienda.db'; print('La base ya existe; no se reinicializa. Las migraciones se aplican solas al abrir la aplicación.') if os.path.exists(p) else (lambda c: [c.executescript(open('db/schema.sql', encoding='utf-8').read()), c.executescript(open('db/seeds_test.sql', encoding='utf-8').read()), c.close(), print('Base de datos inicializada y sembrada con éxito.')])(sqlite3.connect(p))"
 ```
+
+### Base de datos para una tienda real
+Para poner en marcha una tienda real en producción sin datos de prueba (0 productos, 0 clientes, 0 ventas y 0 movimientos de cartera), ejecuta el script de inicialización limpia:
+
+```bash
+python -m scripts.inicializar_base_tienda --ruta db/tienda.db
+```
+
+A diferencia de la base de desarrollo (que incluye datos semilla y credenciales públicas de prueba), este script crea una base completamente limpia con un único usuario administrador (`admin`) y contraseña inicial `tienda123`. Por seguridad, el sistema detecta esta clave provisional y **obliga a cambiarla inmediatamente al ingresar por primera vez**, bloqueando cualquier otra operación en el sistema hasta que se configure una contraseña nueva y segura.
 
 > [!WARNING] Advertencia crítica sobre la base de datos:
 > NUNCA ejecutes `db/schema.sql` directamente sobre una base de datos con datos reales (`db/tienda.db`), ya que comienza con instrucciones `DROP TABLE` y borraría irreversiblemente toda la información. Las modificaciones y adiciones de esquema en bases existentes se aplican automáticamente y de forma segura a través de `db/migraciones.py`, el cual genera primero un respaldo con timestamp (`db/*.bak-*`) antes de realizar cualquier cambio estructural.
@@ -112,7 +122,7 @@ La aplicación abre maximizada y se adapta a cualquier tamaño de pantalla y esc
 
 ## 7. Ejecución de la Suite de Pruebas Automatizadas
 
-El proyecto cuenta con una cobertura integral de **184 pruebas automatizadas** que validan la capa de seguridad, integridad contable, motor analítico heurístico, reglas de veto, persistencia en UTC con presentación en hora local, scripts de rendimiento y reactividad de la interfaz gráfica.
+El proyecto cuenta con una cobertura integral de **192 pruebas automatizadas** que validan la capa de seguridad, integridad contable, motor analítico heurístico, reglas de veto, persistencia en UTC con presentación en hora local, scripts de rendimiento y reactividad de la interfaz gráfica.
 
 Para correr toda la suite con detalle de ejecución:
 
@@ -120,19 +130,20 @@ Para correr toda la suite con detalle de ejecución:
 pytest -v
 ```
 
-### Distribución de la Suite (184 Tests):
-- `tests/test_auth.py` (15 tests): Hashing seguro SHA-256 + salt, verificación resistente a timing attacks (`hmac.compare_digest`), autenticación case-insensitive (`COLLATE NOCASE`), cambio de contraseña con validación de contraseña actual y longitud mínima (6 caracteres), protección contra desactivación del último administrador activo (RF-AUT-03).
+### Distribución de la Suite (192 Tests):
+- `tests/test_auth.py` (17 tests): Hashing seguro SHA-256 + salt, verificación resistente a timing attacks (`hmac.compare_digest`), autenticación case-insensitive (`COLLATE NOCASE`), cambio de contraseña con validación de contraseña actual y longitud mínima (6 caracteres), protección contra desactivación del último administrador activo (RF-AUT-03), validación de contraseña inicial de tienda y creación de usuario administrador inicial.
 - `tests/test_cxc.py` (15 tests): Inmutabilidad append-only contra triggers SQL, control de límites de cupo (RF-CXC-06), prevención de saldos negativos, actualización de vínculo, persistencia auditable de `usuario_id` y `cajero_nombre` en cargos y abonos, soporte de plazo pactado (8/15 días) (RF-CXC-07).
 - `tests/test_estilos.py` (1 test): Conversión de píxeles según la escala de pantalla (`factor_escala`, `px`).
 - `tests/test_explicacion_scoring.py` (3 tests): Textos de la explicación de la clase (normal, veto y arranque en frío) y del vencimiento.
 - `tests/test_fechas.py` (2 tests): Conversión de marcas de tiempo UTC almacenadas por SQLite a la zona horaria local del sistema (`a_hora_local`), manejo de valores nulos, cadenas vacías y entradas inválidas.
+- `tests/test_inicializar_base_tienda.py` (4 tests): Inicialización de base limpia para tienda real sin datos semilla (0 registros), prevención estricta de sobreescritura, verificación de esquema con migraciones al día y reversión limpia ante fallos.
 - `tests/test_inventario.py` (13 tests): Unicidad de códigos de barra, redondeo direccional conservador (`math.floor` en salidas / `math.ceil` en entradas), baja lógica con `ValueError`, alertas de stock mínimo.
 - `tests/test_migraciones.py` (3 tests): Verificación de claves foráneas activas, migración segura de bases de datos legadas con respaldo automático previo (`.bak`) e idempotencia ante bases sin inicializar.
 - `tests/test_pos.py` (15 tests): Orquestador atómico, bloqueo de ventas a crédito en Clase D (RF-SCR-03), regla de desbloqueo Clase C mediante abono $\ge 50\%$ (RF-SCR-04), transaccionalidad compuesta `auto_commit=False`, propagación de `usuario_id` al ledger, asignación de cupo con plazo pactado y reglas de veto R1/R2.
 - `tests/test_rendimiento_script.py` (2 tests): Ejecución del script de medición de rendimiento bajo base de datos temporal con volúmenes reducidos (verificación de 5 operaciones, consistencia de `COUNT(*)`) y rechazo estricto contra la base de producción `db/tienda.db`.
 - `tests/test_reportes.py` (13 tests): Consolidación de arqueo de caja física agrupado por día en hora local (`strftime(..., 'localtime')`), clasificación de bandas de mora según Matriz de Scoring v2.1, emisión de comprobantes en PDF térmico 80mm del movimiento seleccionado con cajero registrado y hora local, encabezado del comprobante sin datos inventados, pie según el tipo de movimiento y nombres largos sin recortar.
 - `tests/test_scoring.py` (41 tests): Motor analítico heurístico completo (Matriz v2.1), mora efectiva con referencia FIFO (ignora cargos saldados), reglas de veto R1 (mora efectiva de 7 a 10 días $\rightarrow$ como máximo Clase C) y R2 (mora > 10 días $\rightarrow$ Clase D), predominancia de categorías por valor comprado (V2.2), protocolo Cold-Start con plazo pactado (8/15 días) y graduación por 3 ciclos de pago oportunos, y sugerencia de aumento de cupo (+20%) para clientes Clase A (RF-SCR-05), y fecha de vencimiento del saldo coherente con la mora efectiva.
-- `tests/test_ui.py` (59 tests): Ciclo de vida de sesión, componentes visuales reactivos (`AreaError`, `BotonRestringidoPorRol`), alta de clientes desde POS con diálogo común (`DialogoNuevoCliente`), adición de producto al carrito con tecla Enter en $\le 2$ interacciones (RF-POS-01), sugerencia de +20% aplicable solo tras confirmación explícita, visualización de reglas de veto en POS y perfil, panel de gestión de usuarios (Pantalla 6), cambio de contraseña y comprobantes PDF del movimiento seleccionado, explicación de la clase, vencimiento en perfil y cartera, barra superior en modo compacto y visibilidad de los controles en el tamaño mínimo de ventana.
+- `tests/test_ui.py` (61 tests): Ciclo de vida de sesión, componentes visuales reactivos (`AreaError`, `BotonRestringidoPorRol`), alta de clientes desde POS con diálogo común (`DialogoNuevoCliente`), adición de producto al carrito con tecla Enter en $\le 2$ interacciones (RF-POS-01), sugerencia de +20% aplicable solo tras confirmación explícita, visualización de reglas de veto en POS y perfil, panel de gestión de usuarios (Pantalla 6), cambio obligatorio de contraseña inicial de tienda, cambio de contraseña voluntario sin redirección forzada y comprobantes PDF del movimiento seleccionado, explicación de la clase, vencimiento en perfil y cartera, barra superior en modo compacto y visibilidad de los controles en el tamaño mínimo de ventana.
 - `tests/test_widgets_comunes.py` (2 tests): Marco desplazable y ajuste del ancho de los textos.
 
 ---
@@ -192,14 +203,16 @@ mi_proyecto_tienda/
 │       └── usuarios.py          # Pantalla 6: Gestión de usuarios y cambio de contraseñas
 ├── scripts/                     # Scripts de diagnóstico y medición
 │   ├── __init__.py
+│   ├── inicializar_base_tienda.py # Inicialización de base limpia para tienda real (sin semillas)
 │   └── medir_rendimiento.py     # Medición automatizada RNF-03 bajo base temporal
-├── tests/                       # Suite completa de pruebas automatizadas (184 tests)
+├── tests/                       # Suite completa de pruebas automatizadas (192 tests)
 │   ├── conftest.py              # Fixtures compartidas y semillas en memoria
 │   ├── test_auth.py
 │   ├── test_cxc.py
 │   ├── test_estilos.py
 │   ├── test_explicacion_scoring.py
 │   ├── test_fechas.py
+│   ├── test_inicializar_base_tienda.py
 │   ├── test_inventario.py
 │   ├── test_migraciones.py
 │   ├── test_pos.py

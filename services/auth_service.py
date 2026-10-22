@@ -7,6 +7,12 @@ from models.usuario import Usuario
 
 ROLES_PERMITIDOS = ("admin", "vendedor")
 LONGITUD_MINIMA_PASSWORD = 6
+CONTRASENA_INICIAL_TIENDA = "tienda123"
+
+
+def usa_contrasena_inicial(password: str) -> bool:
+    """Devuelve True solo si password coincide con la contraseña inicial de tienda."""
+    return password == CONTRASENA_INICIAL_TIENDA
 
 
 def _validar_password_nueva(password: str) -> None:

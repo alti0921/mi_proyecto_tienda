@@ -2335,4 +2335,145 @@ def test_tablas_pos_inventario_usuarios_estirables(ui_app):
             assert col_info["minwidth"] >= fuente_enc.measure(txt)
 
 
+def test_contrasena_inicial_obliga_a_cambiarla(ui_app):
+    """
+    Verifica que al iniciar sesión con la contraseña inicial 'tienda123',
+    el sistema exija obligatoriamente el cambio de clave redirigiendo a la pantalla
+    'usuarios', impidiendo navegar a otras pantallas hasta actualizarla con éxito.
+    Verifica además que las credenciales regulares (admin/admin123) no exijan dicho cambio.
+    """
+    conn = ui_app.sesion.conn
+    username_test = "admin_tienda_inicial_test"
+    auth_service.crear_usuario(
+        username=username_test,
+        password="tienda123",
+        nombre="Admin Tienda Test",
+        conn=conn,
+        rol="admin",
+    )
+
+    try:
+        ui_app.deiconify()
+        # 1. Login con contraseña inicial
+        _login_como(ui_app, username_test, "tienda123")
+        ui_app.update()
+
+        assert ui_app.sesion.esta_autenticado is True
+        assert ui_app.sesion.debe_cambiar_password is True
+
+        usr: PantallaUsuarios = ui_app.pantallas["usuarios"]
+        pos: PantallaPOS = ui_app.pantallas["pos"]
+        assert ui_app.pantalla_actual == "usuarios"
+        assert ui_app.contenedor.winfo_children()[-1] == usr
+        assert usr.lbl_aviso_seguridad.winfo_ismapped()
+        assert "Por seguridad, cambie la contraseña inicial antes de continuar." in usr.lbl_aviso_seguridad.cget("text")
+
+        # 2. Intentar navegar a POS -> Bloqueado, se mantiene en usuarios
+        ui_app.navegar_a("pos")
+        ui_app.update()
+
+        assert ui_app.pantalla_actual == "usuarios"
+        assert ui_app.contenedor.winfo_children()[-1] == usr
+        assert usr.lbl_aviso_seguridad.winfo_ismapped()
+
+        # Intentar cambiar a la misma contraseña inicial "tienda123" -> Rechazado
+        usr.entry_pw_actual.delete(0, tk.END)
+        usr.entry_pw_actual.insert(0, "tienda123")
+        usr.entry_pw_nueva.delete(0, tk.END)
+        usr.entry_pw_nueva.insert(0, "tienda123")
+        usr.entry_pw_confirmar.delete(0, tk.END)
+        usr.entry_pw_confirmar.insert(0, "tienda123")
+        usr._cambiar_mi_password()
+        ui_app.update()
+
+        assert usr.area_error_mi_password.tiene_error() is True
+        assert usr.area_error_mi_password.winfo_ismapped()
+        assert "La nueva contraseña no puede ser la contraseña inicial." in usr.area_error_mi_password.lbl_texto.cget("text")
+        assert ui_app.sesion.debe_cambiar_password is True
+        assert ui_app.pantalla_actual == "usuarios"
+
+        # 3. Cambiar la contraseña a una válida
+        usr.entry_pw_actual.delete(0, tk.END)
+        usr.entry_pw_actual.insert(0, "tienda123")
+        usr.entry_pw_nueva.delete(0, tk.END)
+        usr.entry_pw_nueva.insert(0, "tienda456")
+        usr.entry_pw_confirmar.delete(0, tk.END)
+        usr.entry_pw_confirmar.insert(0, "tienda456")
+        usr._cambiar_mi_password()
+        ui_app.update()
+
+        assert ui_app.sesion.debe_cambiar_password is False
+        assert ui_app.pantalla_actual == "pos"
+        assert ui_app.contenedor.winfo_children()[-1] == pos
+
+        # 4. Navegación libre restaurada
+        ui_app.navegar_a("usuarios")
+        ui_app.update()
+        assert ui_app.pantalla_actual == "usuarios"
+        assert not usr.lbl_aviso_seguridad.winfo_ismapped()
+        ui_app.navegar_a("pos")
+        ui_app.update()
+        assert ui_app.pantalla_actual == "pos"
+
+        # 5. Entrada con admin / admin123 no exige cambio
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.update()
+        assert ui_app.sesion.esta_autenticado is True
+        assert ui_app.sesion.debe_cambiar_password is False
+        assert ui_app.pantalla_actual == "pos"
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_cambio_voluntario_de_contrasena_no_redirige(ui_app):
+    """
+    Verifica que si un usuario con contraseña no inicial (cambio voluntario)
+    actualiza su contraseña en la pantalla de Usuarios, el cambio sea exitoso,
+    se muestre el mensaje de confirmación y permanezca en la pantalla de Usuarios (no redirige a POS).
+    """
+    conn = ui_app.sesion.conn
+    username_voluntario = "vendedor_voluntario_test"
+    auth_service.crear_usuario(
+        username=username_voluntario,
+        password="clave_inicial_ok",
+        nombre="Vendedor Voluntario",
+        conn=conn,
+        rol="vendedor",
+    )
+
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, username_voluntario, "clave_inicial_ok")
+        ui_app.update()
+        assert ui_app.sesion.esta_autenticado is True
+        assert ui_app.sesion.debe_cambiar_password is False
+
+        ui_app.navegar_a("usuarios")
+        ui_app.update()
+        usr: PantallaUsuarios = ui_app.pantallas["usuarios"]
+        assert ui_app.pantalla_actual == "usuarios"
+        assert ui_app.contenedor.winfo_children()[-1] == usr
+
+        usr.entry_pw_actual.delete(0, tk.END)
+        usr.entry_pw_actual.insert(0, "clave_inicial_ok")
+        usr.entry_pw_nueva.delete(0, tk.END)
+        usr.entry_pw_nueva.insert(0, "clave_nueva_ok")
+        usr.entry_pw_confirmar.delete(0, tk.END)
+        usr.entry_pw_confirmar.insert(0, "clave_nueva_ok")
+        usr._cambiar_mi_password()
+        ui_app.update()
+
+        assert usr.lbl_exito_mi_password.winfo_ismapped()
+        assert "actualizada con éxito" in usr.lbl_exito_mi_password.cget("text")
+        assert ui_app.pantalla_actual == "usuarios"
+        assert ui_app.contenedor.winfo_children()[-1] == usr
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+
 

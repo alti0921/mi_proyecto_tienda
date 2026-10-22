@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any
 
-from services.auth_service import autenticar_usuario
+from services.auth_service import autenticar_usuario, usa_contrasena_inicial
 from ui.estilos import (
     COLOR_BLANCO,
     COLOR_FONDO_APP,
@@ -190,9 +190,16 @@ class PantallaLogin(tk.Frame):
             return
 
         # Autenticación exitosa
-        self.sesion.iniciar_sesion(usuario)
+        debe_cambiar = usa_contrasena_inicial(password)
+        self.sesion.iniciar_sesion(usuario, debe_cambiar_password=debe_cambiar)
         self.limpiar_campos()
-        self.app.navegar_a("pos")
+        if self.sesion.debe_cambiar_password:
+            self.app.navegar_a("usuarios")
+            pantalla_usuarios = self.app.pantallas.get("usuarios")
+            if pantalla_usuarios and hasattr(pantalla_usuarios, "mostrar_aviso_seguridad"):
+                pantalla_usuarios.mostrar_aviso_seguridad()
+        else:
+            self.app.navegar_a("pos")
 
     def limpiar_campos(self) -> None:
         """Restablece los campos de entrada y oculta errores."""

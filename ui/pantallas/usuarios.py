@@ -278,10 +278,38 @@ class PantallaUsuarios(tk.Frame):
         lbl_desc_pw.pack(fill=tk.X, anchor="w", pady=(0, 10))
         ajustar_wraplength(lbl_desc_pw)
 
+        # Aviso obligatorio de seguridad para contraseña inicial
+        self.frame_aviso_seguridad = tk.Frame(
+            card_pw,
+            background="#fff3cd",
+            highlightbackground="#ffeeba",
+            highlightthickness=1,
+            padx=10,
+            pady=8,
+        )
+        self.lbl_icono_aviso = tk.Label(
+            self.frame_aviso_seguridad,
+            text="⚠️",
+            background="#fff3cd",
+            font=("Segoe UI", 11, "bold"),
+        )
+        self.lbl_icono_aviso.pack(side=tk.LEFT, padx=(0, 8))
+        self.lbl_aviso_seguridad = tk.Label(
+            self.frame_aviso_seguridad,
+            text="Por seguridad, cambie la contraseña inicial antes de continuar.",
+            background="#fff3cd",
+            foreground="#856404",
+            font=FUENTE_BASE_BOLD,
+            justify=tk.LEFT,
+        )
+        self.lbl_aviso_seguridad.pack(side=tk.LEFT, fill=tk.X, expand=True, anchor="w")
+        ajustar_wraplength(self.lbl_aviso_seguridad)
+
         # Campos
-        tk.Label(
+        self.lbl_pw_actual = tk.Label(
             card_pw, text="Contraseña actual:", font=FUENTE_BASE_BOLD, background=COLOR_BLANCO
-        ).pack(anchor="w", pady=(4, 2))
+        )
+        self.lbl_pw_actual.pack(anchor="w", pady=(4, 2))
         self.entry_pw_actual = ttk.Entry(card_pw, show="*", font=("Segoe UI", 10))
         self.entry_pw_actual.pack(fill=tk.X, pady=(0, 6))
 
@@ -321,6 +349,16 @@ class PantallaUsuarios(tk.Frame):
         )
         self.btn_cambiar_mi_password.pack(anchor="e", pady=(10, 0))
 
+    def mostrar_aviso_seguridad(self, texto: str = "Por seguridad, cambie la contraseña inicial antes de continuar.") -> None:
+        """Muestra el aviso de seguridad que exige el cambio de contraseña inicial."""
+        self.lbl_aviso_seguridad.config(text=texto)
+        if not self.frame_aviso_seguridad.winfo_ismapped():
+            self.frame_aviso_seguridad.pack(fill=tk.X, pady=(0, 10), before=self.lbl_pw_actual)
+
+    def ocultar_aviso_seguridad(self) -> None:
+        """Oculta el aviso de seguridad obligatorio."""
+        self.frame_aviso_seguridad.pack_forget()
+
     # =========================================================================
     # LÓGICA DE NEGOCIO Y MANEJO DE EVENTOS
     # =========================================================================
@@ -331,6 +369,8 @@ class PantallaUsuarios(tk.Frame):
         self.lbl_exito_admin.config(text="")
         self.area_error_mi_password.limpiar()
         self.lbl_exito_mi_password.config(text="")
+        if not self.sesion.debe_cambiar_password:
+            self.ocultar_aviso_seguridad()
 
     def _cargar_lista_usuarios(self) -> None:
         """Carga y refresca el catálogo completo de usuarios en el Treeview."""
@@ -477,6 +517,7 @@ class PantallaUsuarios(tk.Frame):
         """Procesa la actualización de contraseña propia por parte del usuario en sesión."""
         self.area_error_mi_password.limpiar()
         self.lbl_exito_mi_password.config(text="")
+        era_obligatorio = self.sesion.debe_cambiar_password
 
         if not self.sesion.esta_autenticado or not self.sesion.usuario_actual:
             self.area_error_mi_password.mostrar_error("No hay una sesión activa.")
@@ -492,6 +533,12 @@ class PantallaUsuarios(tk.Frame):
             )
             return
 
+        if auth_service.usa_contrasena_inicial(pw_nueva):
+            self.area_error_mi_password.mostrar_error(
+                "La nueva contraseña no puede ser la contraseña inicial."
+            )
+            return
+
         try:
             auth_service.cambiar_password(
                 usuario_id=self.sesion.usuario_actual.id,
@@ -499,12 +546,16 @@ class PantallaUsuarios(tk.Frame):
                 password_nueva=pw_nueva,
                 conn=self.sesion.conn,
             )
+            self.sesion.debe_cambiar_password = False
+            self.ocultar_aviso_seguridad()
             self.lbl_exito_mi_password.config(
                 text="✅ Tu contraseña ha sido actualizada con éxito."
             )
             self.entry_pw_actual.delete(0, tk.END)
             self.entry_pw_nueva.delete(0, tk.END)
             self.entry_pw_confirmar.delete(0, tk.END)
+            if era_obligatorio:
+                self.app.navegar_a("pos")
         except ValueError as e:
             self.area_error_mi_password.mostrar_error(str(e))
         except Exception as e:
@@ -521,6 +572,8 @@ class PantallaUsuarios(tk.Frame):
         del usuario activo en la sesión (Parche #19).
         """
         self._limpiar_mensajes()
+        if self.sesion.debe_cambiar_password:
+            self.mostrar_aviso_seguridad()
         if self.sesion.es_admin:
             self.panel_admin.grid(row=0, column=0, sticky="nsew", padx=(14, 7), pady=12)
             self._cargar_lista_usuarios()

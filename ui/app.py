@@ -108,6 +108,7 @@ class App(tk.Tk):
 
         # 5. Registro de Pantallas
         self.pantallas: Dict[str, tk.Frame] = {}
+        self.pantalla_actual: str = "login"
         self._registrar_pantallas()
 
         # 6. Estado Inicial
@@ -171,7 +172,14 @@ class App(tk.Tk):
         if nombre_pantalla not in self.pantallas:
             raise ValueError(f"Pantalla '{nombre_pantalla}' no registrada.")
 
+        if self.sesion.debe_cambiar_password and nombre_pantalla not in ("usuarios", "login"):
+            pantalla_usuarios = self.pantallas.get("usuarios")
+            if pantalla_usuarios and hasattr(pantalla_usuarios, "mostrar_aviso_seguridad"):
+                pantalla_usuarios.mostrar_aviso_seguridad()
+            return
+
         pantalla = self.pantallas[nombre_pantalla]
+        self.pantalla_actual = nombre_pantalla
 
         # Gestionar barra superior
         if nombre_pantalla == "login":

@@ -10,6 +10,7 @@ from services.auth_service import (
     cambiar_estado_usuario,
     restablecer_password,
     cambiar_password,
+    usa_contrasena_inicial,
 )
 from models.usuario import Usuario
 
@@ -277,4 +278,40 @@ def test_cambiar_password_propia(db_conn):
     cambiar_password(user.id, "clave_inicial", "clave_nueva_valida", db_conn)
     assert autenticar_usuario("user_cambio_pw_test", "clave_nueva_valida", db_conn) is not None
     assert autenticar_usuario("user_cambio_pw_test", "clave_inicial", db_conn) is None
+
+
+def test_usa_contrasena_inicial():
+    """
+    Verifica que usa_contrasena_inicial devuelva True únicamente con la contraseña
+    inicial de tienda ('tienda123'), y False con 'admin123' o cualquier otra clave.
+    """
+    assert usa_contrasena_inicial("tienda123") is True
+    assert usa_contrasena_inicial("admin123") is False
+    assert usa_contrasena_inicial("otra_cualquiera") is False
+    assert usa_contrasena_inicial("") is False
+
+
+def test_crear_usuario_con_contrasena_inicial_tienda(db_conn):
+    """
+    Verifica que crear_usuario con la contraseña inicial de tienda ('tienda123')
+    genere un hash SHA-256 válido y permita autenticar al usuario correctamente.
+    """
+    user = crear_usuario(
+        username="admin_tienda_inicial",
+        password="tienda123",
+        nombre="Admin Tienda",
+        rol="admin",
+        conn=db_conn,
+    )
+    assert user.id is not None
+    cur = db_conn.cursor()
+    cur.execute("SELECT password_hash FROM usuarios WHERE id = ?", (user.id,))
+    pw_hash = cur.fetchone()["password_hash"]
+    assert pw_hash.startswith("sha256$")
+    assert "tienda123" not in pw_hash
+
+    auth = autenticar_usuario("admin_tienda_inicial", "tienda123", db_conn)
+    assert auth is not None
+    assert auth.id == user.id
+
 

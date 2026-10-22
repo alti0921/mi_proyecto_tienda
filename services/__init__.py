@@ -56,6 +56,8 @@ from services.auth_service import (
     cambiar_estado_usuario,
     restablecer_password,
     cambiar_password,
+    CONTRASENA_INICIAL_TIENDA,
+    usa_contrasena_inicial,
 )
 from services.reportes_service import (
     obtener_arqueo_diario,
@@ -106,6 +108,8 @@ __all__ = [
     "cambiar_estado_usuario",
     "restablecer_password",
     "cambiar_password",
+    "CONTRASENA_INICIAL_TIENDA",
+    "usa_contrasena_inicial",
     "obtener_arqueo_diario",
     "obtener_consolidado_cartera",
     "clasificar_banda_mora",

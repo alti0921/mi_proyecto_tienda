@@ -12,14 +12,17 @@ class SesionActual:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.usuario_actual: Optional[Usuario] = None
+        self.debe_cambiar_password: bool = False
 
-    def iniciar_sesion(self, usuario: Usuario) -> None:
+    def iniciar_sesion(self, usuario: Usuario, debe_cambiar_password: bool = False) -> None:
         """Establece el usuario autenticado para la sesión en curso."""
         self.usuario_actual = usuario
+        self.debe_cambiar_password = debe_cambiar_password
 
     def cerrar_sesion(self) -> None:
-        """Limpia la sesión activa, restableciendo usuario_actual a None."""
+        """Limpia la sesión activa, restableciendo usuario_actual a None y debe_cambiar_password a False."""
         self.usuario_actual = None
+        self.debe_cambiar_password = False
 
     @property
     def esta_autenticado(self) -> bool:
