@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from models.cliente import Cliente
 from services import cxc_service, pos_service, reportes_service, scoring_service
 from services.fechas import a_hora_local
+from ui.entrada_numeros import leer_monto
 from ui.estilos import (
     COLOR_ALERTA_BG,
     COLOR_ALERTA_BORDE,
@@ -843,10 +844,13 @@ class PantallaPerfilCliente(tk.Frame):
             return
 
         texto_cupo = self.entry_nuevo_cupo.get().strip()
-        try:
-            nuevo_limite = float(texto_cupo)
-        except ValueError:
+        if not texto_cupo:
             self.area_error_cupo.mostrar_error("El cupo a asignar debe ser un valor numérico válido.")
+            return
+        try:
+            nuevo_limite = leer_monto(texto_cupo)
+        except ValueError as e:
+            self.area_error_cupo.mostrar_error(str(e))
             return
 
         plazo_txt = self.combo_plazo.get()
@@ -895,10 +899,14 @@ class PantallaPerfilCliente(tk.Frame):
         texto_monto = self.entry_monto_abono.get().strip()
         desc = self.entry_desc_abono.get().strip() or "Abono en efectivo"
 
-        try:
-            monto = float(texto_monto)
-        except ValueError:
+        if not texto_monto:
             self.area_error_abono.mostrar_error("Ingrese un monto de abono válido.")
+            return
+
+        try:
+            monto = leer_monto(texto_monto)
+        except ValueError as e:
+            self.area_error_abono.mostrar_error(str(e))
             return
 
         try:

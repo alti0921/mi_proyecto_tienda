@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from models.producto import Producto
 from services import inventario_service
+from ui.entrada_numeros import leer_monto
 from ui.estilos import (
     COLOR_ALERTA_BG,
     COLOR_ALERTA_BORDE,
@@ -640,16 +641,21 @@ class PantallaInventario(tk.Frame):
             self.area_error_edit.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
             return
         try:
-            costo = float(costo_str)
-            if costo <= 0:
-                self.area_error_edit.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
-                return
-        except ValueError:
+            costo = leer_monto(costo_str)
+        except ValueError as e:
+            self.area_error_edit.mostrar_error(str(e))
+            return
+        if costo <= 0:
             self.area_error_edit.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
             return
 
         try:
-            precio = float(self.entry_edit_precio.get().strip())
+            precio = leer_monto(self.entry_edit_precio.get())
+        except ValueError as e:
+            self.area_error_edit.mostrar_error(str(e))
+            return
+
+        try:
             stock_min = int(self.entry_edit_stock_min.get().strip())
         except ValueError:
             self.area_error_edit.mostrar_error("Verifique que precio, costo y stock mínimo tengan formato numérico válido.")
@@ -718,16 +724,21 @@ class PantallaInventario(tk.Frame):
             self.area_error_crear.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
             return
         try:
-            costo = float(costo_str)
-            if costo <= 0:
-                self.area_error_crear.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
-                return
-        except ValueError:
+            costo = leer_monto(costo_str)
+        except ValueError as e:
+            self.area_error_crear.mostrar_error(str(e))
+            return
+        if costo <= 0:
             self.area_error_crear.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
             return
 
         try:
-            precio = float(self.entry_crear_precio.get().strip())
+            precio = leer_monto(self.entry_crear_precio.get())
+        except ValueError as e:
+            self.area_error_crear.mostrar_error(str(e))
+            return
+
+        try:
             stock = int(self.entry_crear_stock.get().strip() or 0)
             stock_min = int(self.entry_crear_stock_min.get().strip() or 5)
         except ValueError:

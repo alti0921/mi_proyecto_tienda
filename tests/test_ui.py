@@ -3013,6 +3013,186 @@ def test_pos_cantidad_invalida_mensaje_claro(ui_app):
         ui_app.update()
 
 
+def test_inventario_precio_y_costo_con_punto_de_miles(ui_app):
+    """
+    Crear un producto con precio '2.500' y costo '1.800' -> en la base de datos queda precio 2500.0 y costo 1800.0.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("inventario")
+        ui_app.update()
+
+        inv: PantallaInventario = ui_app.pantallas["inventario"]
+        inv.notebook.select(inv.tab_crear)
+        conn = ui_app.sesion.conn
+
+        nombre_test = "Prod Miles Test F4"
+        inv.entry_crear_nombre.delete(0, tk.END)
+        inv.entry_crear_nombre.insert(0, nombre_test)
+        inv.entry_crear_precio.delete(0, tk.END)
+        inv.entry_crear_precio.insert(0, "2.500")
+        inv.entry_crear_costo.delete(0, tk.END)
+        inv.entry_crear_costo.insert(0, "1.800")
+        inv._crear_producto()
+        ui_app.update()
+
+        assert not inv.area_error_crear.tiene_error()
+        cur = conn.cursor()
+        cur.execute("SELECT id, precio_venta, costo FROM productos WHERE nombre = ?", (nombre_test,))
+        row = cur.fetchone()
+        assert row is not None
+        assert float(row["precio_venta"]) == 2500.0
+        assert float(row["costo"]) == 1800.0
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_perfil_cupo_y_abono_con_punto_de_miles(ui_app):
+    """
+    Asignar cupo '50.000' -> limite_credito queda en 50000.0;
+    registrar abono '10.000' sobre una deuda suficiente -> movimiento registrado por 10000.0.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("cxc")
+        ui_app.update()
+
+        cxc_frame: PantallaPerfilCliente = ui_app.pantallas["cxc"]
+        conn = ui_app.sesion.conn
+
+        cli = cxc_service.crear_cliente(
+            nombre="Cliente Miles Test F4",
+            telefono="3001112233",
+            conn=conn,
+            limite_credito=20000.0,
+        )
+        cxc_service.registrar_cargo(
+            cliente_id=cli.id,
+            monto=15000.0,
+            conn=conn,
+            descripcion="Deuda inicial para prueba",
+        )
+        cxc_frame._cargar_selector_clientes(mantener_id=cli.id)
+        ui_app.update()
+
+        # 1. Asignar cupo "50.000"
+        cxc_frame.entry_nuevo_cupo.delete(0, tk.END)
+        cxc_frame.entry_nuevo_cupo.insert(0, "50.000")
+        cxc_frame._asignar_cupo()
+        ui_app.update()
+
+        assert cxc_frame.area_error_cupo.tiene_error() is False
+        cli_bd = cxc_service.obtener_cliente(cli.id, conn)
+        assert cli_bd.limite_credito == 50000.0
+
+        # 2. Registrar abono "10.000"
+        cxc_frame.entry_monto_abono.delete(0, tk.END)
+        cxc_frame.entry_monto_abono.insert(0, "10.000")
+        cxc_frame._registrar_abono()
+        ui_app.update()
+
+        assert cxc_frame.area_error_abono.tiene_error() is False
+        historial = cxc_service.obtener_historial_cxc(cli.id, conn)
+        abonos = [m for m in historial if m.tipo_movimiento == "abono"]
+        assert len(abonos) >= 1
+        assert float(abonos[0].monto) == 10000.0
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_pos_monto_recibido_y_venta_rapida_con_punto_de_miles(ui_app):
+    """
+    Venta rápida con monto '2.000' -> línea en carrito con subtotal 2000.0;
+    cobrar con monto recibido '5.000' en venta de contado -> venta registrada con monto_pagado 5000.0.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("pos")
+        ui_app.update()
+
+        pos: PantallaPOS = ui_app.pantallas["pos"]
+        conn = ui_app.sesion.conn
+
+        pos._vaciar_carrito()
+
+        # 1. Venta rápida con monto "2.000"
+        pos.entry_monto_directo.delete(0, tk.END)
+        pos.entry_monto_directo.insert(0, "2.000")
+        pos._agregar_monto_global()
+        ui_app.update()
+
+        assert len(pos._carrito) == 1
+        assert pos._carrito[0]["subtotal"] == 2000.0
+        assert pos._obtener_total_carrito() == 2000.0
+
+        # 2. Cobrar de contado (efectivo) con monto recibido "5.000"
+        pos.var_tipo_pago.set("efectivo")
+        pos._on_tipo_pago_cambiado()
+        pos.entry_monto_recibido.delete(0, tk.END)
+        pos.entry_monto_recibido.insert(0, "5.000")
+        pos._confirmar_venta()
+        ui_app.update()
+
+        assert pos.area_error.tiene_error() is False
+        assert len(pos._carrito) == 0
+
+        cur = conn.cursor()
+        cur.execute("SELECT monto_pagado, total FROM ventas ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        assert row is not None
+        assert float(row["total"]) == 2000.0
+        assert float(row["monto_pagado"]) == 5000.0
+    finally:
+        pos._vaciar_carrito()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_monto_invalido_muestra_mensaje(ui_app):
+    """
+    Escribir 'abc' en el campo costo al crear un producto -> se muestra el mensaje de leer_monto
+    y el producto NO se crea.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("inventario")
+        ui_app.update()
+
+        inv: PantallaInventario = ui_app.pantallas["inventario"]
+        inv.notebook.select(inv.tab_crear)
+        conn = ui_app.sesion.conn
+
+        nombre_test = "Prod Invalido Test F4"
+        inv.entry_crear_nombre.delete(0, tk.END)
+        inv.entry_crear_nombre.insert(0, nombre_test)
+        inv.entry_crear_precio.delete(0, tk.END)
+        inv.entry_crear_precio.insert(0, "3000")
+        inv.entry_crear_costo.delete(0, tk.END)
+        inv.entry_crear_costo.insert(0, "abc")
+        inv._crear_producto()
+        ui_app.update()
+
+        assert inv.area_error_crear.tiene_error() is True
+        assert inv.area_error_crear._mensaje_actual == "Escriba el valor con números, por ejemplo 2500 o 2.500."
+
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM productos WHERE nombre = ?", (nombre_test,))
+        assert cur.fetchone() is None
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
 
 
 

@@ -8,6 +8,7 @@ from models.producto import Producto
 from models.venta import Venta
 from services import cxc_service, inventario_service, pos_service, scoring_service
 from services.pos_service import LineaVentaInput
+from ui.entrada_numeros import leer_monto
 from ui.estilos import (
     COLOR_ALERTA_BG,
     COLOR_ALERTA_BORDE,
@@ -657,11 +658,17 @@ class PantallaPOS(tk.Frame):
         texto_monto = self.entry_monto_directo.get().strip()
         desc = self.entry_desc_directo.get().strip() or "Venta por monto global"
 
+        if not texto_monto:
+            self.area_error.mostrar_error("Ingrese un monto válido y mayor a cero para la venta rápida.")
+            return
+
         try:
-            monto = float(texto_monto)
-            if monto <= 0:
-                raise ValueError()
-        except ValueError:
+            monto = leer_monto(texto_monto)
+        except ValueError as e:
+            self.area_error.mostrar_error(str(e))
+            return
+
+        if monto <= 0:
             self.area_error.mostrar_error("Ingrese un monto válido y mayor a cero para la venta rápida.")
             return
 
@@ -791,7 +798,7 @@ class PantallaPOS(tk.Frame):
         texto_monto = self.entry_monto_recibido.get().strip()
 
         try:
-            monto = float(texto_monto) if texto_monto else 0.0
+            monto = leer_monto(texto_monto) if texto_monto else 0.0
         except ValueError:
             monto = 0.0
 
@@ -902,11 +909,14 @@ class PantallaPOS(tk.Frame):
         texto_monto = self.entry_monto_recibido.get().strip()
 
         # Parsear monto pagado
-        try:
-            monto_pagado = float(texto_monto) if texto_monto else 0.0
-        except ValueError:
-            self.area_error.mostrar_error("El monto ingresado no es válido.")
-            return
+        if texto_monto:
+            try:
+                monto_pagado = leer_monto(texto_monto)
+            except ValueError as e:
+                self.area_error.mostrar_error(str(e))
+                return
+        else:
+            monto_pagado = 0.0
 
         # Validaciones de interfaz: presencia de cliente si es venta a crédito
         if tipo_pago == "credito" and not self._cliente_actual:
