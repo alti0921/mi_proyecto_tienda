@@ -593,3 +593,62 @@ def test_asignar_limite_credito_con_plazo_pactado(db_conn):
     assert row3["limite_credito"] == 60000.0
     assert row3["plazo_pactado_dias"] == 15
 
+
+def test_venta_guarda_costo_unitario_historico(db_conn):
+    """
+    Verifica que al registrar una venta se guarde el costo_unitario histórico del producto:
+    - Producto con costo 3500 y precio 5000: vender 2 -> la línea guarda costo_unitario 3500.
+    - Actualizar el producto a costo 3800 -> la línea vieja permanece en 3500.
+    - Una línea por monto global (sin producto_id) se guarda con costo_unitario NULL.
+    """
+    from services.inventario_service import crear_producto, actualizar_producto
+
+    prod = crear_producto(
+        nombre="Aceite Girasol Hist",
+        categoria="canasta_basica",
+        precio_venta=5000.0,
+        costo=3500.0,
+        conn=db_conn,
+        stock=20,
+    )
+
+    items = [
+        LineaVentaInput(producto_id=prod.id, cantidad=2.0, precio_unitario=5000.0),
+        LineaVentaInput(cantidad=1.0, precio_unitario=2500.0, descripcion="Venta libre global"),
+    ]
+
+    venta = registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=items,
+        conn=db_conn,
+        monto_pagado=15000.0,
+    )
+
+    cur = db_conn.cursor()
+    cur.execute(
+        "SELECT producto_id, descripcion, cantidad, precio_unitario, subtotal, costo_unitario FROM venta_detalle WHERE venta_id = ? ORDER BY id ASC",
+        (venta.id,),
+    )
+    filas = cur.fetchall()
+    assert len(filas) == 2
+
+    # Línea catalogada: costo_unitario 3500
+    assert filas[0]["producto_id"] == prod.id
+    assert filas[0]["costo_unitario"] == 3500.0
+    assert filas[0]["cantidad"] == 2.0
+    assert filas[0]["subtotal"] == 10000.0
+
+    # Línea monto global: costo_unitario NULL
+    assert filas[1]["producto_id"] is None
+    assert filas[1]["costo_unitario"] is None
+    assert filas[1]["subtotal"] == 2500.0
+
+    # Actualizar costo del producto en el catálogo
+    actualizar_producto(producto_id=prod.id, costo=3800.0, conn=db_conn)
+
+    # La línea histórica permanece intacta en 3500
+    cur.execute("SELECT costo_unitario FROM venta_detalle WHERE venta_id = ? AND producto_id = ?", (venta.id, prod.id))
+    assert cur.fetchone()["costo_unitario"] == 3500.0
+
+

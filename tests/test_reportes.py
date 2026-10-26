@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 
 from services.reportes_service import (
     obtener_arqueo_diario,
+    obtener_resumen_periodo,
     obtener_consolidado_cartera,
     clasificar_banda_mora,
     generar_comprobante_pdf,
@@ -472,5 +473,284 @@ def test_comprobante_pdf_nombres_largos(db_conn, tmp_path):
 
     assert os.path.exists(ruta_a)
     assert os.path.getsize(ruta_a) > 0
+
+
+def test_arqueo_ganancia_en_mano_y_por_cobrar(db_conn):
+    """
+    Verifica que en un mismo día:
+    - Venta de contado de 100.000 con costo 70.000 -> ganancia_en_mano 30.000.
+    - Venta a crédito de 40.000 con costo 28.000 -> ganancia_por_cobrar 12.000.
+    - Abono de 10.000 -> no suma a la ganancia.
+    - ganancia_total 42.000, total_vendido 140.000, costo_ventas 98.000.
+    - Las claves anteriores del arqueo se conservan con sus cálculos intactos.
+    """
+    p1 = crear_producto(
+        nombre="Prod Contado Rent",
+        categoria="canasta_basica",
+        precio_venta=100000.0,
+        costo=70000.0,
+        conn=db_conn,
+        stock=10,
+    )
+    p2 = crear_producto(
+        nombre="Prod Credito Rent",
+        categoria="canasta_basica",
+        precio_venta=40000.0,
+        costo=28000.0,
+        conn=db_conn,
+        stock=10,
+    )
+    cli = crear_cliente(nombre="Cli Arqueo Ganancia", limite_credito=100000.0, conn=db_conn)
+
+    # 1. Venta de contado (efectivo)
+    registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=[LineaVentaInput(producto_id=p1.id, cantidad=1.0, precio_unitario=100000.0)],
+        conn=db_conn,
+        monto_pagado=100000.0,
+    )
+
+    # 2. Venta a crédito
+    registrar_venta(
+        usuario_id=1,
+        tipo_pago="credito",
+        items=[LineaVentaInput(producto_id=p2.id, cantidad=1.0, precio_unitario=40000.0)],
+        conn=db_conn,
+        cliente_id=cli.id,
+        monto_pagado=0.0,
+    )
+
+    # 3. Abono a cartera
+    registrar_abono(cliente_id=cli.id, monto=10000.0, conn=db_conn, usuario_id=1)
+
+    arqueo = obtener_arqueo_diario("now", db_conn)
+
+    # Métricas de ganancia nuevas
+    assert arqueo["ganancia_en_mano"] == 30000.0
+    assert arqueo["ganancia_por_cobrar"] == 12000.0
+    assert arqueo["ganancia_total"] == 42000.0
+    assert arqueo["total_vendido"] == 140000.0
+    assert arqueo["costo_ventas"] == 98000.0
+    assert arqueo["ventas_sin_costo"] == 0.0
+    assert arqueo["lineas_sin_costo"] == 0
+
+    # Claves originales del arqueo intactas
+    assert arqueo["ventas_efectivo"] == 100000.0
+    assert arqueo["ventas_credito"] == 40000.0
+    assert arqueo["total_ventas_credito"] == 40000.0
+    assert arqueo["anticipos_credito"] == 0.0
+    assert arqueo["abonos_cxc"] == 10000.0
+    assert arqueo["total_efectivo_en_caja"] == 110000.0
+    assert arqueo["total_ingresos_dia"] == 110000.0
+
+
+def test_arqueo_ventas_sin_costo(db_conn):
+    """
+    Verifica que líneas sin costo registrado (monto global) o con costo 0:
+    - Se acumulen en ventas_sin_costo (suma de subtotales) y lineas_sin_costo (conteo).
+    - No sumen a la ganancia.
+    """
+    p_cero = crear_producto(
+        nombre="Prod Costo Cero",
+        categoria="canasta_basica",
+        precio_venta=2000.0,
+        costo=0.0,
+        conn=db_conn,
+        stock=10,
+    )
+
+    items = [
+        LineaVentaInput(cantidad=1.0, precio_unitario=5000.0, descripcion="Venta global"),
+        LineaVentaInput(producto_id=p_cero.id, cantidad=1.0, precio_unitario=2000.0),
+    ]
+
+    registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=items,
+        conn=db_conn,
+        monto_pagado=7000.0,
+    )
+
+    arqueo = obtener_arqueo_diario("now", db_conn)
+
+    assert arqueo["ventas_sin_costo"] == 7000.0
+    assert arqueo["lineas_sin_costo"] == 2
+    assert arqueo["ganancia_total"] == 0.0
+    assert arqueo["ganancia_en_mano"] == 0.0
+    assert arqueo["ganancia_por_cobrar"] == 0.0
+    assert arqueo["costo_ventas"] == 0.0
+    assert arqueo["total_vendido"] == 7000.0
+
+
+def test_resumen_mes_coincide_con_suma_de_dias(db_conn):
+    """
+    Verifica que el resumen del mes coincida exactamente con la suma de los arqueos
+    de los días del mes y el desglose contenga exactamente los días con movimientos.
+    """
+    p = crear_producto(
+        nombre="Prod Mes Arq",
+        categoria="canasta_basica",
+        precio_venta=10000.0,
+        costo=6000.0,
+        conn=db_conn,
+        stock=50,
+    )
+
+    v1 = registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=[LineaVentaInput(producto_id=p.id, cantidad=2.0, precio_unitario=10000.0)],
+        conn=db_conn,
+        monto_pagado=20000.0,
+    )
+    v2 = registrar_venta(
+        usuario_id=1,
+        tipo_pago="nequi",
+        items=[LineaVentaInput(producto_id=p.id, cantidad=3.0, precio_unitario=10000.0)],
+        conn=db_conn,
+        monto_pagado=30000.0,
+    )
+
+    # Reubicar ventas a fechas específicas en marzo 2026
+    db_conn.execute("UPDATE ventas SET fecha_venta = '2026-03-10 15:00:00' WHERE id = ?", (v1.id,))
+    db_conn.execute("UPDATE ventas SET fecha_venta = '2026-03-20 15:00:00' WHERE id = ?", (v2.id,))
+    db_conn.commit()
+
+    arq1 = obtener_arqueo_diario("2026-03-10", db_conn)
+    arq2 = obtener_arqueo_diario("2026-03-20", db_conn)
+    res_mes = obtener_resumen_periodo(2026, 3, conn=db_conn)
+
+    assert res_mes["periodo"] == "2026-03"
+    assert res_mes["ventas_efectivo"] == round(arq1["ventas_efectivo"] + arq2["ventas_efectivo"], 2)
+    assert res_mes["ventas_nequi"] == round(arq1["ventas_nequi"] + arq2["ventas_nequi"], 2)
+    assert res_mes["total_ingresos"] == round(arq1["total_ingresos_dia"] + arq2["total_ingresos_dia"], 2)
+    assert res_mes["total_vendido"] == round(arq1["total_vendido"] + arq2["total_vendido"], 2)
+    assert res_mes["costo_ventas"] == round(arq1["costo_ventas"] + arq2["costo_ventas"], 2)
+    assert res_mes["ganancia_en_mano"] == round(arq1["ganancia_en_mano"] + arq2["ganancia_en_mano"], 2)
+    assert res_mes["ganancia_total"] == round(arq1["ganancia_total"] + arq2["ganancia_total"], 2)
+    assert res_mes["numero_ventas"] == 2
+
+    assert len(res_mes["desglose"]) == 2
+    assert [d["periodo"] for d in res_mes["desglose"]] == ["2026-03-10", "2026-03-20"]
+    assert res_mes["desglose"][0]["total_vendido"] == 20000.0
+    assert res_mes["desglose"][0]["ganancia_total"] == 8000.0
+    assert res_mes["desglose"][1]["total_vendido"] == 30000.0
+    assert res_mes["desglose"][1]["ganancia_total"] == 12000.0
+
+
+def test_resumen_anio_desglose_por_mes(db_conn):
+    """
+    Verifica que el resumen anual agrupe correctamente los meses con movimientos
+    y los totales coincidan con la consolidación de cada mes.
+    """
+    p = crear_producto(
+        nombre="Prod Anual Arq",
+        categoria="canasta_basica",
+        precio_venta=8000.0,
+        costo=5000.0,
+        conn=db_conn,
+        stock=50,
+    )
+
+    v1 = registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=[LineaVentaInput(producto_id=p.id, cantidad=1.0, precio_unitario=8000.0)],
+        conn=db_conn,
+        monto_pagado=8000.0,
+    )
+    v2 = registrar_venta(
+        usuario_id=1,
+        tipo_pago="efectivo",
+        items=[LineaVentaInput(producto_id=p.id, cantidad=2.0, precio_unitario=8000.0)],
+        conn=db_conn,
+        monto_pagado=16000.0,
+    )
+
+    db_conn.execute("UPDATE ventas SET fecha_venta = '2026-03-15 10:00:00' WHERE id = ?", (v1.id,))
+    db_conn.execute("UPDATE ventas SET fecha_venta = '2026-07-22 11:00:00' WHERE id = ?", (v2.id,))
+    db_conn.commit()
+
+    res_marzo = obtener_resumen_periodo(2026, 3, conn=db_conn)
+    res_julio = obtener_resumen_periodo(2026, 7, conn=db_conn)
+    res_anio = obtener_resumen_periodo(2026, conn=db_conn)
+
+    assert res_anio["periodo"] == "2026"
+    assert len(res_anio["desglose"]) == 2
+    assert [d["periodo"] for d in res_anio["desglose"]] == ["2026-03", "2026-07"]
+
+    assert res_anio["total_vendido"] == round(res_marzo["total_vendido"] + res_julio["total_vendido"], 2)
+    assert res_anio["total_ingresos"] == round(res_marzo["total_ingresos"] + res_julio["total_ingresos"], 2)
+    assert res_anio["ganancia_total"] == round(res_marzo["ganancia_total"] + res_julio["ganancia_total"], 2)
+    assert res_anio["numero_ventas"] == 2
+
+
+def test_resumen_validaciones_y_periodo_vacio(db_conn):
+    """
+    Verifica validaciones de parámetros en obtener_resumen_periodo (mes y año fuera de rango, conn nula)
+    y que un periodo sin movimientos retorne totales en 0 y desglose vacío.
+    """
+    with pytest.raises(ValueError, match="Se requiere una conexión activa"):
+        obtener_resumen_periodo(2026, 5, conn=None)
+
+    with pytest.raises(ValueError, match="El mes debe ser un número entero entre 1 y 12"):
+        obtener_resumen_periodo(2026, 13, conn=db_conn)
+
+    with pytest.raises(ValueError, match="El mes debe ser un número entero entre 1 y 12"):
+        obtener_resumen_periodo(2026, 0, conn=db_conn)
+
+    with pytest.raises(ValueError, match="El año debe ser un número entero entre 2000 y 2100"):
+        obtener_resumen_periodo(1999, 5, conn=db_conn)
+
+    with pytest.raises(ValueError, match="El año debe ser un número entero entre 2000 y 2100"):
+        obtener_resumen_periodo(2101, conn=db_conn)
+
+    res_vacio = obtener_resumen_periodo(2024, 1, conn=db_conn)
+    assert res_vacio["periodo"] == "2024-01"
+    assert res_vacio["total_vendido"] == 0.0
+    assert res_vacio["costo_ventas"] == 0.0
+    assert res_vacio["ganancia_en_mano"] == 0.0
+    assert res_vacio["ganancia_por_cobrar"] == 0.0
+    assert res_vacio["ganancia_total"] == 0.0
+    assert res_vacio["ventas_sin_costo"] == 0.0
+    assert res_vacio["lineas_sin_costo"] == 0
+    assert res_vacio["total_ingresos"] == 0.0
+    assert res_vacio["numero_ventas"] == 0
+    assert res_vacio["desglose"] == []
+
+
+def test_ganancia_credito_con_anticipo_va_a_por_cobrar(db_conn):
+    """
+    Verifica que en una venta a crédito con anticipo:
+    venta a crédito de 40.000 (costo 28.000) con monto_pagado 10.000
+    -> ganancia_por_cobrar 12000, ganancia_en_mano 0, y anticipos_credito 10000 en el arqueo.
+    """
+    p = crear_producto(
+        nombre="Producto Credito Anticipo",
+        categoria="canasta_basica",
+        precio_venta=40000.0,
+        costo=28000.0,
+        conn=db_conn,
+        stock=10,
+    )
+    cli = crear_cliente(nombre="Cliente Anticipo CxC", limite_credito=100000.0, conn=db_conn)
+
+    registrar_venta(
+        usuario_id=1,
+        tipo_pago="credito",
+        items=[LineaVentaInput(producto_id=p.id, cantidad=1.0, precio_unitario=40000.0)],
+        conn=db_conn,
+        cliente_id=cli.id,
+        monto_pagado=10000.0,
+    )
+
+    arqueo = obtener_arqueo_diario("now", db_conn)
+
+    assert arqueo["ganancia_por_cobrar"] == 12000.0
+    assert arqueo["ganancia_en_mano"] == 0.0
+    assert arqueo["anticipos_credito"] == 10000.0
+
 
 

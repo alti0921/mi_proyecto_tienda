@@ -80,6 +80,7 @@ CREATE TABLE venta_detalle (
     cantidad REAL NOT NULL CHECK (cantidad > 0),
     precio_unitario REAL NOT NULL CHECK (precio_unitario >= 0),
     subtotal REAL NOT NULL CHECK (subtotal >= 0),
+    costo_unitario REAL CHECK (costo_unitario IS NULL OR costo_unitario >= 0), -- costo del producto en el momento de la venta; NULL = sin costo registrado
     FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
     FOREIGN KEY (producto_id) REFERENCES productos(id)
 );

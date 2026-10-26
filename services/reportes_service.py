@@ -14,6 +14,88 @@ from services.fechas import a_hora_local
 from db.rutas import carpeta_comprobantes
 
 
+def _calcular_ganancia(
+    conn: sqlite3.Connection, formato: str, valor: str
+) -> Dict[str, Any]:
+    """
+    Calcula la rentabilidad real de las ventas del periodo ('%Y-%m-%d', '%Y-%m', '%Y').
+    Reglas:
+    - Ganancia de una línea = subtotal - (cantidad * costo_unitario), solo si costo_unitario > 0.
+    - Líneas con costo_unitario NULL o <= 0 no entran en la ganancia y se suman a 'ventas_sin_costo'
+      con su conteo en 'lineas_sin_costo'.
+    - Ventas de contado (efectivo, nequi) -> ganancia_en_mano.
+    - Ventas a crédito -> ganancia_por_cobrar.
+    - ganancia_total = ganancia_en_mano + ganancia_por_cobrar.
+    - Fechas en hora local con strftime(..., 'localtime').
+    """
+    if formato not in ("%Y-%m-%d", "%Y-%m", "%Y"):
+        raise ValueError(f"Formato de fecha no soportado: {formato}")
+
+    cursor = conn.cursor()
+
+    # 1. Total vendido en el periodo (suma de ventas.total)
+    cursor.execute(
+        f"""
+        SELECT COALESCE(SUM(total), 0.0) AS total_vendido
+        FROM ventas
+        WHERE strftime('{formato}', fecha_venta, 'localtime') = ?
+        """,
+        (valor,),
+    )
+    row_tot = cursor.fetchone()
+    total_vendido = float(row_tot["total_vendido"] if row_tot else 0.0)
+
+    # 2. Desglose de líneas de venta del periodo
+    cursor.execute(
+        f"""
+        SELECT vd.cantidad, vd.subtotal, vd.costo_unitario, v.tipo_pago
+        FROM venta_detalle vd
+        JOIN ventas v ON vd.venta_id = v.id
+        WHERE strftime('{formato}', v.fecha_venta, 'localtime') = ?
+        """,
+        (valor,),
+    )
+    lineas = cursor.fetchall()
+
+    costo_ventas = 0.0
+    ganancia_en_mano = 0.0
+    ganancia_por_cobrar = 0.0
+    ventas_sin_costo = 0.0
+    lineas_sin_costo = 0
+
+    for l in lineas:
+        cant = float(l["cantidad"] or 0.0)
+        sub = float(l["subtotal"] or 0.0)
+        costo_u = l["costo_unitario"]
+        tipo = l["tipo_pago"]
+
+        if costo_u is not None and float(costo_u) > 0:
+            costo_linea = round(cant * float(costo_u), 2)
+            ganancia_linea = round(sub - costo_linea, 2)
+            costo_ventas += costo_linea
+            if tipo in ("efectivo", "nequi"):
+                ganancia_en_mano += ganancia_linea
+            elif tipo == "credito":
+                ganancia_por_cobrar += ganancia_linea
+        else:
+            ventas_sin_costo += sub
+            lineas_sin_costo += 1
+
+    ganancia_en_mano = round(ganancia_en_mano, 2)
+    ganancia_por_cobrar = round(ganancia_por_cobrar, 2)
+    ganancia_total = round(ganancia_en_mano + ganancia_por_cobrar, 2)
+
+    return {
+        "total_vendido": round(total_vendido, 2),
+        "costo_ventas": round(costo_ventas, 2),
+        "ganancia_en_mano": ganancia_en_mano,
+        "ganancia_por_cobrar": ganancia_por_cobrar,
+        "ganancia_total": ganancia_total,
+        "ventas_sin_costo": round(ventas_sin_costo, 2),
+        "lineas_sin_costo": int(lineas_sin_costo),
+    }
+
+
 def obtener_arqueo_diario(
     fecha: Optional[str] = None,
     conn: Optional[sqlite3.Connection] = None,
@@ -174,7 +256,9 @@ def obtener_arqueo_diario(
     total_efectivo_en_caja = round(ventas_efectivo + anticipos_credito + abonos_cxc, 2)
     total_ingresos_dia = round(total_efectivo_en_caja + ventas_nequi, 2)
 
-    return {
+    ganancia_dia = _calcular_ganancia(conn, "%Y-%m-%d", fecha_str)
+
+    res = {
         "fecha": fecha_str,
         "ventas_efectivo": ventas_efectivo,
         "ventas_nequi": ventas_nequi,
@@ -186,6 +270,207 @@ def obtener_arqueo_diario(
         "total_ingresos_dia": total_ingresos_dia,
         "total_transacciones": len(movimientos),
         "movimientos": movimientos,
+    }
+    res.update(ganancia_dia)
+    return res
+
+
+def obtener_resumen_periodo(
+    anio: int,
+    mes: Optional[int] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Dict[str, Any]:
+    """
+    Consolida las métricas operativas de caja y ganancia para un periodo mensual o anual.
+
+    Parámetros:
+    - anio: Año del periodo (entero entre 2000 y 2100).
+    - mes: Mes del periodo (1 a 12), o None para consolidar el año completo.
+    - conn: Conexión activa a SQLite (obligatoria).
+
+    Retorna un diccionario con:
+    - periodo: 'YYYY-MM' o 'YYYY'.
+    - ventas_efectivo, ventas_nequi, ventas_credito, total_ventas_credito, anticipos_credito,
+      abonos_cxc, total_efectivo_en_caja, total_ingresos, numero_ventas.
+    - total_vendido, costo_ventas, ganancia_en_mano, ganancia_por_cobrar, ganancia_total,
+      ventas_sin_costo, lineas_sin_costo.
+    - desglose: lista ordenada de subperiodos con movimientos (por día si mes != None, por mes si mes == None).
+    """
+    if conn is None:
+        raise ValueError("Se requiere una conexión activa a la base de datos (conn).")
+
+    if not isinstance(anio, int) or isinstance(anio, bool) or not (2000 <= anio <= 2100):
+        raise ValueError(f"El año debe ser un número entero entre 2000 y 2100 (recibido: {anio}).")
+
+    if mes is not None:
+        if not isinstance(mes, int) or isinstance(mes, bool) or not (1 <= mes <= 12):
+            raise ValueError(f"El mes debe ser un número entero entre 1 y 12 (recibido: {mes}).")
+        periodo_str = f"{anio:04d}-{mes:02d}"
+        formato_sql = "%Y-%m"
+        sub_formato = "%Y-%m-%d"
+    else:
+        periodo_str = f"{anio:04d}"
+        formato_sql = "%Y"
+        sub_formato = "%Y-%m"
+
+    cursor = conn.cursor()
+
+    # 1. Ventas del periodo completo
+    cursor.execute(
+        f"""
+        SELECT id, fecha_venta, tipo_pago, total, monto_pagado
+        FROM ventas
+        WHERE strftime('{formato_sql}', fecha_venta, 'localtime') = ?
+        ORDER BY fecha_venta ASC, id ASC
+        """,
+        (periodo_str,),
+    )
+    ventas_rows = cursor.fetchall()
+
+    ventas_efectivo = 0.0
+    ventas_nequi = 0.0
+    ventas_credito_neto = 0.0
+    total_ventas_credito_bruto = 0.0
+    anticipos_credito = 0.0
+
+    for r in ventas_rows:
+        v_tipo = r["tipo_pago"]
+        v_total = float(r["total"] or 0.0)
+        v_pagado = float(r["monto_pagado"] or 0.0)
+
+        if v_tipo == "efectivo":
+            ventas_efectivo += v_total
+        elif v_tipo == "nequi":
+            ventas_nequi += v_total
+        elif v_tipo == "credito":
+            neto_financiado = round(v_total - v_pagado, 2)
+            total_ventas_credito_bruto += v_total
+            ventas_credito_neto += neto_financiado
+            anticipos_credito += v_pagado
+
+    # 2. Abonos recibidos en CxC durante el periodo
+    cursor.execute(
+        f"""
+        SELECT id, fecha_movimiento, monto
+        FROM cuentas_por_cobrar
+        WHERE tipo_movimiento = 'abono'
+          AND strftime('{formato_sql}', fecha_movimiento, 'localtime') = ?
+        ORDER BY fecha_movimiento ASC, id ASC
+        """,
+        (periodo_str,),
+    )
+    abonos_rows = cursor.fetchall()
+
+    abonos_cxc = sum(float(r["monto"] or 0.0) for r in abonos_rows)
+
+    ventas_efectivo = round(ventas_efectivo, 2)
+    ventas_nequi = round(ventas_nequi, 2)
+    ventas_credito_neto = round(ventas_credito_neto, 2)
+    total_ventas_credito_bruto = round(total_ventas_credito_bruto, 2)
+    anticipos_credito = round(anticipos_credito, 2)
+    abonos_cxc = round(abonos_cxc, 2)
+
+    total_efectivo_en_caja = round(ventas_efectivo + anticipos_credito + abonos_cxc, 2)
+    total_ingresos = round(total_efectivo_en_caja + ventas_nequi, 2)
+    numero_ventas = len(ventas_rows)
+
+    ganancia_periodo = _calcular_ganancia(conn, formato_sql, periodo_str)
+
+    # 3. Desglose ordenado por subperiodo con movimientos
+    cursor.execute(
+        f"""
+        SELECT DISTINCT strftime('{sub_formato}', fecha_venta, 'localtime') AS p
+        FROM ventas
+        WHERE strftime('{formato_sql}', fecha_venta, 'localtime') = ?
+        """,
+        (periodo_str,),
+    )
+    p_ventas = {row[0] for row in cursor.fetchall() if row[0]}
+
+    cursor.execute(
+        f"""
+        SELECT DISTINCT strftime('{sub_formato}', fecha_movimiento, 'localtime') AS p
+        FROM cuentas_por_cobrar
+        WHERE tipo_movimiento = 'abono'
+          AND strftime('{formato_sql}', fecha_movimiento, 'localtime') = ?
+        """,
+        (periodo_str,),
+    )
+    p_abonos = {row[0] for row in cursor.fetchall() if row[0]}
+
+    sub_periodos = sorted(p_ventas | p_abonos)
+
+    desglose: List[Dict[str, Any]] = []
+    for sub_p in sub_periodos:
+        cursor.execute(
+            f"""
+            SELECT tipo_pago, total, monto_pagado
+            FROM ventas
+            WHERE strftime('{sub_formato}', fecha_venta, 'localtime') = ?
+            """,
+            (sub_p,),
+        )
+        sub_v_rows = cursor.fetchall()
+
+        sub_v_efectivo = 0.0
+        sub_v_nequi = 0.0
+        sub_anticipos = 0.0
+        for sv in sub_v_rows:
+            sv_tipo = sv["tipo_pago"]
+            sv_total = float(sv["total"] or 0.0)
+            sv_pagado = float(sv["monto_pagado"] or 0.0)
+            if sv_tipo == "efectivo":
+                sub_v_efectivo += sv_total
+            elif sv_tipo == "nequi":
+                sub_v_nequi += sv_total
+            elif sv_tipo == "credito":
+                sub_anticipos += sv_pagado
+
+        cursor.execute(
+            f"""
+            SELECT COALESCE(SUM(monto), 0.0) AS total_abonos
+            FROM cuentas_por_cobrar
+            WHERE tipo_movimiento = 'abono'
+              AND strftime('{sub_formato}', fecha_movimiento, 'localtime') = ?
+            """,
+            (sub_p,),
+        )
+        sub_abonos_row = cursor.fetchone()
+        sub_abonos = float(sub_abonos_row["total_abonos"] if sub_abonos_row else 0.0)
+
+        sub_total_efectivo_en_caja = round(sub_v_efectivo + sub_anticipos + sub_abonos, 2)
+        sub_total_ingresos = round(sub_total_efectivo_en_caja + sub_v_nequi, 2)
+
+        gan_sub = _calcular_ganancia(conn, sub_formato, sub_p)
+
+        desglose.append({
+            "periodo": sub_p,
+            "total_vendido": gan_sub["total_vendido"],
+            "total_ingresos": sub_total_ingresos,
+            "ganancia_en_mano": gan_sub["ganancia_en_mano"],
+            "ganancia_por_cobrar": gan_sub["ganancia_por_cobrar"],
+            "ganancia_total": gan_sub["ganancia_total"],
+        })
+
+    return {
+        "periodo": periodo_str,
+        "ventas_efectivo": ventas_efectivo,
+        "ventas_nequi": ventas_nequi,
+        "ventas_credito": ventas_credito_neto,
+        "total_ventas_credito": total_ventas_credito_bruto,
+        "anticipos_credito": anticipos_credito,
+        "abonos_cxc": abonos_cxc,
+        "total_efectivo_en_caja": total_efectivo_en_caja,
+        "total_ingresos": total_ingresos,
+        "numero_ventas": numero_ventas,
+        "total_vendido": ganancia_periodo["total_vendido"],
+        "costo_ventas": ganancia_periodo["costo_ventas"],
+        "ganancia_en_mano": ganancia_periodo["ganancia_en_mano"],
+        "ganancia_por_cobrar": ganancia_periodo["ganancia_por_cobrar"],
+        "ganancia_total": ganancia_periodo["ganancia_total"],
+        "ventas_sin_costo": ganancia_periodo["ventas_sin_costo"],
+        "lineas_sin_costo": ganancia_periodo["lineas_sin_costo"],
+        "desglose": desglose,
     }
 
 

@@ -134,16 +134,19 @@ def _normalizar_item(item: Union[LineaVentaInput, Dict[str, Any]], conn: sqlite3
     sub_float = round(cant_float * p_unit_float, 2) if sub is None else round(float(sub), 2)
 
     cursor = conn.cursor()
+    costo_unitario = None
     if p_id is not None:
-        cursor.execute("SELECT nombre FROM productos WHERE id = ?", (p_id,))
+        cursor.execute("SELECT nombre, costo FROM productos WHERE id = ?", (p_id,))
         p_row = cursor.fetchone()
         if not p_row:
             raise ValueError(f"Producto ID {p_id} no encontrado en el catálogo.")
         if not desc:
             desc = p_row["nombre"]
+        costo_unitario = float(p_row["costo"])
     else:
         if not desc or not str(desc).strip():
             desc = "Venta por monto global"
+        costo_unitario = None
 
     return {
         "producto_id": p_id,
@@ -151,6 +154,7 @@ def _normalizar_item(item: Union[LineaVentaInput, Dict[str, Any]], conn: sqlite3
         "precio_unitario": p_unit_float,
         "descripcion": str(desc).strip(),
         "subtotal": sub_float,
+        "costo_unitario": costo_unitario,
     }
 
 
@@ -259,10 +263,10 @@ def registrar_venta(
         for it in items_procesados:
             cursor.execute(
                 """
-                INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal, costo_unitario)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (venta_id, it["producto_id"], it["descripcion"], it["cantidad"], it["precio_unitario"], it["subtotal"]),
+                (venta_id, it["producto_id"], it["descripcion"], it["cantidad"], it["precio_unitario"], it["subtotal"], it["costo_unitario"]),
             )
 
         # 4. Si es crédito: registrar cargo en CxC y snapshot en scoring_historial

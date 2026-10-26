@@ -32,23 +32,41 @@ def aplicar_migraciones(
     if not columnas_clientes:
         return migraciones_aplicadas
 
-    # Obtener nombres de columnas
-    nombres_columnas = [
-        col[1] if isinstance(col, tuple) else col["name"] for col in columnas_clientes
-    ]
+    respaldo_realizado = False
 
-    # Si clientes ya tiene la columna plazo_pactado_dias, no hace nada
-    if "plazo_pactado_dias" not in nombres_columnas:
-        # Si db_path apunta a un archivo existente (no ":memory:"), respaldar antes de alterar
-        if db_path and db_path != ":memory:" and os.path.isfile(db_path):
+    def asegurar_respaldo() -> None:
+        nonlocal respaldo_realizado
+        if not respaldo_realizado and db_path and db_path != ":memory:" and os.path.isfile(db_path):
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup_path = f"{db_path}.bak-{timestamp}"
             shutil.copy2(db_path, backup_path)
+            respaldo_realizado = True
 
+    # 1. Migración "001_plazo_pactado_dias"
+    nombres_columnas_clientes = [
+        col[1] if isinstance(col, tuple) else col["name"] for col in columnas_clientes
+    ]
+    if "plazo_pactado_dias" not in nombres_columnas_clientes:
+        asegurar_respaldo()
         cursor.execute(
             "ALTER TABLE clientes ADD COLUMN plazo_pactado_dias INTEGER NOT NULL DEFAULT 8 CHECK (plazo_pactado_dias IN (8, 15))"
         )
         conn.commit()
         migraciones_aplicadas.append("001_plazo_pactado_dias")
+
+    # 2. Migración "002_costo_unitario_venta_detalle"
+    cursor.execute("PRAGMA table_info(venta_detalle)")
+    columnas_vd = cursor.fetchall()
+    if columnas_vd:
+        nombres_columnas_vd = [
+            col[1] if isinstance(col, tuple) else col["name"] for col in columnas_vd
+        ]
+        if "costo_unitario" not in nombres_columnas_vd:
+            asegurar_respaldo()
+            cursor.execute(
+                "ALTER TABLE venta_detalle ADD COLUMN costo_unitario REAL CHECK (costo_unitario IS NULL OR costo_unitario >= 0)"
+            )
+            conn.commit()
+            migraciones_aplicadas.append("002_costo_unitario_venta_detalle")
 
     return migraciones_aplicadas

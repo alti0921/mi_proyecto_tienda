@@ -118,3 +118,148 @@ def test_migracion_sin_tabla_clientes_no_hace_nada(tmp_path):
         assert len(glob.glob(f"{db_file}.bak-*")) == 0
     finally:
         conn.close()
+
+
+def test_migracion_002_agrega_costo_unitario(tmp_path):
+    """
+    Verifica la migración 002_costo_unitario_venta_detalle sobre una base con venta_detalle sin la columna:
+    - Retorna ['002_costo_unitario_venta_detalle'].
+    - Genera exactamente un archivo de respaldo .bak-*.
+    - Agrega costo_unitario con CHECK que permite NULL o >= 0.
+    - Preserva intactos los datos de las filas previas con costo_unitario NULL.
+    - Segunda llamada retorna [] e idempotente.
+    """
+    db_file = str(tmp_path / "tienda_sin_costo.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+
+    # Tabla clientes con plazo_pactado_dias ya presente (para que 001 no aplique)
+    conn.execute("""
+        CREATE TABLE clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            plazo_pactado_dias INTEGER NOT NULL DEFAULT 8
+        );
+    """)
+
+    # Tabla ventas
+    conn.execute("""
+        CREATE TABLE ventas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            cliente_id INTEGER,
+            tipo_pago TEXT NOT NULL,
+            total REAL NOT NULL,
+            monto_pagado REAL NOT NULL DEFAULT 0.0,
+            fecha_venta DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # Tabla venta_detalle sin costo_unitario
+    conn.execute("""
+        CREATE TABLE venta_detalle (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            descripcion TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            precio_unitario REAL NOT NULL,
+            subtotal REAL NOT NULL
+        );
+    """)
+
+    conn.execute("INSERT INTO ventas (usuario_id, tipo_pago, total) VALUES (1, 'efectivo', 3000.0)")
+    conn.execute("""
+        INSERT INTO venta_detalle (venta_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+        VALUES (1, NULL, 'Galletas', 2.0, 1500.0, 3000.0)
+    """)
+    conn.commit()
+
+    # 1. Aplicar migraciones
+    aplicadas = aplicar_migraciones(conn, db_path=db_file)
+    assert aplicadas == ["002_costo_unitario_venta_detalle"]
+
+    # 2. Respaldo creado
+    archivos_bak = glob.glob(f"{db_file}.bak-*")
+    assert len(archivos_bak) == 1
+
+    # 3. Columna existe y fila vieja preservada con costo_unitario NULL
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(venta_detalle)")
+    cols = [c["name"] for c in cur.fetchall()]
+    assert "costo_unitario" in cols
+
+    cur.execute("SELECT id, venta_id, descripcion, cantidad, precio_unitario, subtotal, costo_unitario FROM venta_detalle")
+    fila = cur.fetchone()
+    assert fila["descripcion"] == "Galletas"
+    assert fila["cantidad"] == 2.0
+    assert fila["precio_unitario"] == 1500.0
+    assert fila["subtotal"] == 3000.0
+    assert fila["costo_unitario"] is None
+
+    # 4. Segunda llamada: idempotente
+    aplicadas_2 = aplicar_migraciones(conn, db_path=db_file)
+    assert aplicadas_2 == []
+    assert len(glob.glob(f"{db_file}.bak-*")) == 1
+
+    conn.close()
+
+
+def test_migraciones_001_y_002_un_solo_respaldo(tmp_path):
+    """
+    Verifica que al aplicar migraciones sobre una base con clientes sin plazo_pactado_dias
+    y venta_detalle sin costo_unitario:
+    - Retorna ['001_plazo_pactado_dias', '002_costo_unitario_venta_detalle'].
+    - Existe exactamente un archivo .bak-*.
+    - Una segunda llamada retorna [] y no crea otro archivo de respaldo.
+    """
+    db_file = str(tmp_path / "tienda_sin_001_ni_002.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+
+    # Tabla clientes sin plazo_pactado_dias
+    conn.execute("""
+        CREATE TABLE clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            cedula TEXT UNIQUE NOT NULL,
+            telefono TEXT,
+            direccion TEXT,
+            limite_credito REAL NOT NULL DEFAULT 0.0,
+            saldo_actual REAL NOT NULL DEFAULT 0.0,
+            activo BOOLEAN NOT NULL DEFAULT 1,
+            fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # Tabla venta_detalle sin costo_unitario
+    conn.execute("""
+        CREATE TABLE venta_detalle (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            descripcion TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            precio_unitario REAL NOT NULL,
+            subtotal REAL NOT NULL
+        );
+    """)
+    conn.commit()
+
+    # 1. Aplicar migraciones
+    aplicadas = aplicar_migraciones(conn, db_path=db_file)
+    assert aplicadas == ["001_plazo_pactado_dias", "002_costo_unitario_venta_detalle"]
+
+    # 2. Verificar que existe exactamente UN archivo .bak-*
+    archivos_bak = glob.glob(f"{db_file}.bak-*")
+    assert len(archivos_bak) == 1
+
+    # 3. Segunda llamada: retorna [] y sigue existiendo exactamente un .bak-*
+    aplicadas_segunda = aplicar_migraciones(conn, db_path=db_file)
+    assert aplicadas_segunda == []
+    assert len(glob.glob(f"{db_file}.bak-*")) == 1
+
+    conn.close()
+

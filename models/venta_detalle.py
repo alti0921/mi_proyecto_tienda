@@ -10,3 +10,4 @@ class VentaDetalle:
     cantidad: float = 1.0
     precio_unitario: float = 0.0
     subtotal: float = 0.0
+    costo_unitario: Optional[float] = None

@@ -62,6 +62,7 @@ from services.auth_service import (
 from services.reportes_service import (
     obtener_arqueo_diario,
     obtener_consolidado_cartera,
+    obtener_resumen_periodo,
 )
 
 __all__ = [
@@ -112,6 +113,7 @@ __all__ = [
     "usa_contrasena_inicial",
     "obtener_arqueo_diario",
     "obtener_consolidado_cartera",
+    "obtener_resumen_periodo",
     "clasificar_banda_mora",
     "obtener_plazo_pactado",
     "calcular_sugerencia_cupo",
