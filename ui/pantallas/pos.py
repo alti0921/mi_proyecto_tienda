@@ -559,11 +559,19 @@ class PantallaPOS(tk.Frame):
 
     def _agregar_producto_al_carrito(self, producto: Producto) -> None:
         """Helper privado para agregar un producto catalogado al carrito con la cantidad del spinbox."""
+        raw_cant = str(self.spin_cant_agregar.get()).strip()
+        if not raw_cant:
+            self.area_error.mostrar_error("Escriba la cantidad con números, por ejemplo 1 o 0,5.")
+            return
+
+        raw_cant = raw_cant.replace(",", ".")
         try:
-            cant = float(self.spin_cant_agregar.get() or 1)
-            if cant <= 0:
-                raise ValueError()
+            cant = float(raw_cant)
         except ValueError:
+            self.area_error.mostrar_error("Escriba la cantidad con números, por ejemplo 1 o 0,5.")
+            return
+
+        if cant <= 0:
             self.area_error.mostrar_error("La cantidad a agregar debe ser un número mayor a cero.")
             return
 

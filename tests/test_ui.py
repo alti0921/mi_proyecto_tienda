@@ -2928,6 +2928,92 @@ def test_editar_producto_exige_costo(ui_app):
         ui_app.update()
 
 
+def test_pos_cantidad_con_coma(ui_app):
+    """
+    Verifica que en el POS, ingresar una cantidad con coma decimal (e.g. '0,5')
+    sea aceptado y agregue una línea al carrito con cantidad 0.5 y subtotal = 0.5 * precio.
+    """
+    try:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("pos")
+        ui_app.update()
+        pos: PantallaPOS = ui_app.pantallas["pos"]
+
+        pos._carrito.clear()
+        pos._refrescar_carrito_visual()
+
+        hijos = pos.tree_catalogo.get_children()
+        assert len(hijos) > 0
+        pos.tree_catalogo.selection_set(hijos[0])
+
+        prod_id = int(pos.tree_catalogo.item(hijos[0], "values")[0])
+        producto = pos._productos_cache[prod_id]
+
+        pos.spin_cant_agregar.set("0,5")
+        pos._agregar_producto_seleccionado()
+        ui_app.update()
+
+        assert not pos.area_error.tiene_error()
+        assert len(pos._carrito) == 1
+        item = pos._carrito[0]
+        assert item["producto_id"] == producto.id
+        assert item["cantidad"] == 0.5
+        assert item["subtotal"] == round(0.5 * producto.precio_venta, 2)
+    finally:
+        pos._carrito.clear()
+        pos._refrescar_carrito_visual()
+        pos.spin_cant_agregar.set(1)
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_pos_cantidad_invalida_mensaje_claro(ui_app):
+    """
+    Verifica los mensajes de error para cantidades no numéricas y menores o iguales a cero:
+    - 'abc' -> 'Escriba la cantidad con números, por ejemplo 1 o 0,5.' y el carrito no cambia.
+    - '0' -> 'La cantidad a agregar debe ser un número mayor a cero.'
+    """
+    try:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("pos")
+        ui_app.update()
+        pos: PantallaPOS = ui_app.pantallas["pos"]
+
+        pos._carrito.clear()
+        pos._refrescar_carrito_visual()
+
+        hijos = pos.tree_catalogo.get_children()
+        assert len(hijos) > 0
+        pos.tree_catalogo.selection_set(hijos[0])
+
+        # 1. No numérico: "abc"
+        pos.spin_cant_agregar.set("abc")
+        pos._agregar_producto_seleccionado()
+        ui_app.update()
+
+        assert pos.area_error.tiene_error()
+        assert pos.area_error._mensaje_actual == "Escriba la cantidad con números, por ejemplo 1 o 0,5."
+        assert len(pos._carrito) == 0
+
+        # 2. Número <= 0: "0"
+        pos.spin_cant_agregar.set("0")
+        pos._agregar_producto_seleccionado()
+        ui_app.update()
+
+        assert pos.area_error.tiene_error()
+        assert pos.area_error._mensaje_actual == "La cantidad a agregar debe ser un número mayor a cero."
+        assert len(pos._carrito) == 0
+    finally:
+        pos._carrito.clear()
+        pos._refrescar_carrito_visual()
+        pos.spin_cant_agregar.set(1)
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+
 
 
 
