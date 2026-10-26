@@ -634,9 +634,22 @@ class PantallaInventario(tk.Frame):
         cat = self.combo_edit_cat.get()
         cod = self.entry_edit_codigo.get().strip() or None
 
+        # Costo obligatorio (> 0)
+        costo_str = self.entry_edit_costo.get().strip()
+        if not costo_str:
+            self.area_error_edit.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
+            return
+        try:
+            costo = float(costo_str)
+            if costo <= 0:
+                self.area_error_edit.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
+                return
+        except ValueError:
+            self.area_error_edit.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
+            return
+
         try:
             precio = float(self.entry_edit_precio.get().strip())
-            costo = float(self.entry_edit_costo.get().strip())
             stock_min = int(self.entry_edit_stock_min.get().strip())
         except ValueError:
             self.area_error_edit.mostrar_error("Verifique que precio, costo y stock mínimo tengan formato numérico válido.")
@@ -699,9 +712,22 @@ class PantallaInventario(tk.Frame):
         cat = self.combo_crear_cat.get()
         cod = self.entry_crear_codigo.get().strip() or None
 
+        # Costo obligatorio (> 0)
+        costo_str = self.entry_crear_costo.get().strip()
+        if not costo_str:
+            self.area_error_crear.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
+            return
+        try:
+            costo = float(costo_str)
+            if costo <= 0:
+                self.area_error_crear.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
+                return
+        except ValueError:
+            self.area_error_crear.mostrar_error("Ingrese cuánto le costó el producto (debe ser mayor que $0).")
+            return
+
         try:
             precio = float(self.entry_crear_precio.get().strip())
-            costo = float(self.entry_crear_costo.get().strip())
             stock = int(self.entry_crear_stock.get().strip() or 0)
             stock_min = int(self.entry_crear_stock_min.get().strip() or 5)
         except ValueError:

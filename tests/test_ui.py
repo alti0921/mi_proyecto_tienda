@@ -2585,6 +2585,350 @@ def test_todas_las_areas_error_se_pueden_mostrar(ui_app):
         assert area.tiene_error() is False
 
 
+def test_arqueo_ganancia_solo_admin(ui_app):
+    """
+    Verifica que en Reportes > Arqueo, frame_ganancia_arqueo sea visible para admin
+    (winfo_ismapped tras deiconify/update) y no visible para vendedor. Termina como admin.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+        rep.notebook.select(rep.tab_arqueo)
+        ui_app.update()
+        assert rep.frame_ganancia_arqueo.winfo_ismapped()
+
+        _login_como(ui_app, "vendedor", "vend123")
+        ui_app.navegar_a("reportes")
+        ui_app.update()
+        assert not rep.frame_ganancia_arqueo.winfo_ismapped()
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_arqueo_muestra_ganancia_del_servicio(ui_app):
+    """
+    Registra hoy una venta de contado de un producto con costo, recarga el arqueo
+    y verifica que el texto de las 4 tarjetas nuevas sea igual al formato de los valores
+    de obtener_arqueo_diario("now").
+    """
+    try:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+        rep.notebook.select(rep.tab_arqueo)
+        ui_app.update()
+        conn = ui_app.sesion.conn
+
+        prod = inventario_service.crear_producto(
+            nombre="Prod UI Arqueo Ganancia",
+            categoria="canasta_basica",
+            precio_venta=15000.0,
+            costo=10000.0,
+            conn=conn,
+            stock=10,
+        )
+        pos_service.registrar_venta(
+            usuario_id=ui_app.sesion.usuario_actual.id,
+            tipo_pago="efectivo",
+            items=[pos_service.LineaVentaInput(producto_id=prod.id, cantidad=1.0, precio_unitario=15000.0)],
+            conn=conn,
+            monto_pagado=15000.0,
+        )
+
+        rep._cargar_arqueo_diario()
+        ui_app.update()
+
+        datos = reportes_service.obtener_arqueo_diario("now", conn=conn)
+        assert rep.lbl_kpi_total_vendido.cget("text") == f"${datos['total_vendido']:,.2f}"
+        assert rep.lbl_kpi_ganancia_mano.cget("text") == f"${datos['ganancia_en_mano']:,.2f}"
+        assert rep.lbl_kpi_ganancia_cobrar.cget("text") == f"${datos['ganancia_por_cobrar']:,.2f}"
+        assert rep.lbl_kpi_ganancia_total.cget("text") == f"${datos['ganancia_total']:,.2f}"
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_aviso_sin_costo_visible(ui_app):
+    """
+    Registra hoy una venta por monto global, recarga el arqueo y verifica que
+    lbl_aviso_sin_costo esté visible y su texto contenga el ventas_sin_costo formateado.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+        rep.notebook.select(rep.tab_arqueo)
+        ui_app.update()
+        conn = ui_app.sesion.conn
+
+        pos_service.registrar_venta(
+            usuario_id=ui_app.sesion.usuario_actual.id,
+            tipo_pago="efectivo",
+            items=[pos_service.LineaVentaInput(cantidad=1.0, precio_unitario=6543.0, descripcion="Venta global rapida")],
+            conn=conn,
+            monto_pagado=6543.0,
+        )
+
+        rep._cargar_arqueo_diario()
+        ui_app.update()
+
+        datos = reportes_service.obtener_arqueo_diario("now", conn=conn)
+        assert datos["lineas_sin_costo"] > 0
+        assert rep.lbl_aviso_sin_costo.winfo_ismapped()
+        v_sin_costo_str = f"${datos['ventas_sin_costo']:,.2f}"
+        assert v_sin_costo_str in rep.lbl_aviso_sin_costo.cget("text")
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_resumen_bloqueado_para_vendedor(ui_app):
+    """
+    Verifica que la pestaña de resumen quede state="disabled" para el vendedor
+    y "normal" para el admin.
+    """
+    try:
+        _login_como(ui_app, "vendedor", "vend123")
+        ui_app.navegar_a("reportes")
+        ui_app.update()
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+        assert rep.notebook.tab(rep.tab_resumen, "state") == "disabled"
+
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        ui_app.update()
+        assert rep.notebook.tab(rep.tab_resumen, "state") == "normal"
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_resumen_mes_y_anio_coinciden_con_servicio(ui_app):
+    """
+    Crea una venta y la mueve a '2026-03-12 15:00:00'. Selecciona 2026 / Marzo y verifica
+    que las tarjetas coincidan con el servicio y len(filas) == len(desglose).
+    Luego selecciona 'Todo el año' y verifica encabezado 'Mes' y filas == len(desglose).
+    """
+    try:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        ui_app.update()
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+        conn = ui_app.sesion.conn
+
+        prod = inventario_service.crear_producto(
+            nombre="Prod Resumen UI Match",
+            categoria="canasta_basica",
+            precio_venta=25000.0,
+            costo=15000.0,
+            conn=conn,
+            stock=10,
+        )
+        venta = pos_service.registrar_venta(
+            usuario_id=ui_app.sesion.usuario_actual.id,
+            tipo_pago="efectivo",
+            items=[pos_service.LineaVentaInput(producto_id=prod.id, cantidad=1.0, precio_unitario=25000.0)],
+            conn=conn,
+            monto_pagado=25000.0,
+        )
+        conn.execute("UPDATE ventas SET fecha_venta = '2026-03-12 15:00:00' WHERE id = ?", (venta.id,))
+        conn.commit()
+
+        # 1. Mes: 2026 / Marzo
+        rep.combo_anio_resumen.set("2026")
+        rep.combo_mes_resumen.set("Marzo")
+        rep._cargar_resumen()
+        ui_app.update()
+
+        datos_mes = reportes_service.obtener_resumen_periodo(2026, 3, conn=conn)
+        assert rep.lbl_res_ingresos.cget("text") == f"${datos_mes['total_ingresos']:,.2f}"
+        assert rep.lbl_res_vendido.cget("text") == f"${datos_mes['total_vendido']:,.2f}"
+        assert rep.lbl_res_ganancia_mano.cget("text") == f"${datos_mes['ganancia_en_mano']:,.2f}"
+        assert rep.lbl_res_ganancia_cobrar.cget("text") == f"${datos_mes['ganancia_por_cobrar']:,.2f}"
+        assert rep.lbl_res_ganancia_total.cget("text") == f"${datos_mes['ganancia_total']:,.2f}"
+        assert len(rep.tree_resumen.get_children()) == len(datos_mes["desglose"])
+        assert rep.tree_resumen.heading("periodo")["text"] == "Día"
+
+        # 2. Todo el año: 2026
+        rep.combo_mes_resumen.set("Todo el año")
+        rep._cargar_resumen()
+        ui_app.update()
+
+        datos_anio = reportes_service.obtener_resumen_periodo(2026, conn=conn)
+        assert rep.lbl_res_ingresos.cget("text") == f"${datos_anio['total_ingresos']:,.2f}"
+        assert rep.lbl_res_vendido.cget("text") == f"${datos_anio['total_vendido']:,.2f}"
+        assert rep.lbl_res_ganancia_mano.cget("text") == f"${datos_anio['ganancia_en_mano']:,.2f}"
+        assert rep.lbl_res_ganancia_cobrar.cget("text") == f"${datos_anio['ganancia_por_cobrar']:,.2f}"
+        assert rep.lbl_res_ganancia_total.cget("text") == f"${datos_anio['ganancia_total']:,.2f}"
+        assert len(rep.tree_resumen.get_children()) == len(datos_anio["desglose"])
+        assert rep.tree_resumen.heading("periodo")["text"] == "Mes"
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_resumen_visible_en_ventana_minima(ui_app):
+    """
+    Verifica que en el tamaño mínimo real (ui_app.minsize()), btn_consultar_resumen
+    y tree_resumen queden dentro de la ventana; y en la pestaña Arqueo, como admin,
+    las 4 tarjetas de ganancia también.
+    """
+    ui_app.deiconify()
+    _login_como(ui_app, "admin", "admin123")
+    min_w, min_h = ui_app.minsize()
+    geom_orig = ui_app.geometry()
+    ui_app.geometry(f"{min_w}x{min_h}")
+    ui_app.navegar_a("reportes")
+    ui_app.update()
+
+    rep: PantallaReportes = ui_app.pantallas["reportes"]
+    rep.notebook.select(rep.tab_arqueo)
+    ui_app.update()
+    try:
+        # En pestaña Arqueo como admin: las 4 tarjetas de ganancia quedan dentro de la ventana
+        assert _dentro_de(rep.lbl_kpi_total_vendido, ui_app)
+        assert _dentro_de(rep.lbl_kpi_ganancia_mano, ui_app)
+        assert _dentro_de(rep.lbl_kpi_ganancia_cobrar, ui_app)
+        assert _dentro_de(rep.lbl_kpi_ganancia_total, ui_app)
+
+        # En pestaña Resumen: btn_consultar_resumen y tree_resumen quedan dentro de la ventana
+        rep.notebook.select(rep.tab_resumen)
+        ui_app.update()
+        assert _dentro_de(rep.btn_consultar_resumen, ui_app)
+        assert _dentro_de(rep.tree_resumen, ui_app)
+    finally:
+        rep.notebook.select(rep.tab_arqueo)
+        ui_app.geometry(geom_orig)
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_crear_producto_exige_costo(ui_app):
+    """
+    Verifica que en Crear Producto, costo vacío y costo 0 muestren el error correspondiente
+    y no persistan el producto; con costo > 0 sí se guarde.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("inventario")
+        ui_app.update()
+
+        inv: PantallaInventario = ui_app.pantallas["inventario"]
+        inv.notebook.select(inv.tab_crear)
+        conn = ui_app.sesion.conn
+
+        nombre_test = "Prod Costo Obligatorio Test"
+        inv.entry_crear_nombre.delete(0, tk.END)
+        inv.entry_crear_nombre.insert(0, nombre_test)
+        inv.entry_crear_precio.delete(0, tk.END)
+        inv.entry_crear_precio.insert(0, "5000")
+
+        # 1. Costo vacío
+        inv.entry_crear_costo.delete(0, tk.END)
+        inv._crear_producto()
+        ui_app.update()
+        assert inv.area_error_crear.tiene_error()
+        assert inv.area_error_crear._mensaje_actual == "Ingrese cuánto le costó el producto (debe ser mayor que $0)."
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM productos WHERE nombre = ?", (nombre_test,))
+        assert cur.fetchone() is None
+
+        # 2. Costo 0
+        inv.entry_crear_costo.delete(0, tk.END)
+        inv.entry_crear_costo.insert(0, "0")
+        inv._crear_producto()
+        ui_app.update()
+        assert inv.area_error_crear.tiene_error()
+        assert inv.area_error_crear._mensaje_actual == "Ingrese cuánto le costó el producto (debe ser mayor que $0)."
+        cur.execute("SELECT id FROM productos WHERE nombre = ?", (nombre_test,))
+        assert cur.fetchone() is None
+
+        # 3. Costo > 0
+        inv.entry_crear_costo.delete(0, tk.END)
+        inv.entry_crear_costo.insert(0, "3000")
+        inv._crear_producto()
+        ui_app.update()
+        assert not inv.area_error_crear.tiene_error()
+        cur.execute("SELECT id, costo FROM productos WHERE nombre = ?", (nombre_test,))
+        row = cur.fetchone()
+        assert row is not None
+        assert float(row["costo"]) == 3000.0
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_editar_producto_exige_costo(ui_app):
+    """
+    Verifica que en Editar Producto, costo vacío y costo 0 muestren el error correspondiente
+    y no alteren el producto; con costo > 0 sí se actualice.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("inventario")
+        ui_app.update()
+
+        inv: PantallaInventario = ui_app.pantallas["inventario"]
+        conn = ui_app.sesion.conn
+
+        prod = inventario_service.crear_producto(
+            nombre="Prod Edit Costo Obligatorio",
+            categoria="canasta_basica",
+            precio_venta=8000.0,
+            costo=5000.0,
+            conn=conn,
+            stock=10,
+        )
+        inv._refrescar_todo(mantener_id=prod.id)
+        ui_app.update()
+        inv.notebook.select(inv.tab_editar)
+
+        # 1. Costo vacío
+        inv.entry_edit_costo.delete(0, tk.END)
+        inv._guardar_edicion()
+        ui_app.update()
+        assert inv.area_error_edit.tiene_error()
+        assert inv.area_error_edit._mensaje_actual == "Ingrese cuánto le costó el producto (debe ser mayor que $0)."
+        p_bd = inventario_service.obtener_producto(prod.id, conn)
+        assert p_bd.costo == 5000.0
+
+        # 2. Costo 0
+        inv.entry_edit_costo.delete(0, tk.END)
+        inv.entry_edit_costo.insert(0, "0")
+        inv._guardar_edicion()
+        ui_app.update()
+        assert inv.area_error_edit.tiene_error()
+        assert inv.area_error_edit._mensaje_actual == "Ingrese cuánto le costó el producto (debe ser mayor que $0)."
+        p_bd = inventario_service.obtener_producto(prod.id, conn)
+        assert p_bd.costo == 5000.0
+
+        # 3. Costo > 0
+        inv.entry_edit_costo.delete(0, tk.END)
+        inv.entry_edit_costo.insert(0, "6500")
+        inv._guardar_edicion()
+        ui_app.update()
+        assert not inv.area_error_edit.tiene_error()
+        p_bd = inventario_service.obtener_producto(prod.id, conn)
+        assert p_bd.costo == 6500.0
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+
 
 
 

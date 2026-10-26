@@ -81,7 +81,12 @@ class PantallaReportes(tk.Frame):
         self.notebook.add(self.tab_cartera, text="📊 Cartera / CxC [Admin]")
         self._construir_pestana_cartera()
 
-        # Evento de cambio de pestaña para cargar cartera bajo demanda
+        # 3. Pestaña 3: Resumen Mensual / Anual [Admin]
+        self.tab_resumen = tk.Frame(self.notebook, background=COLOR_FONDO_APP, padx=10, pady=10)
+        self.notebook.add(self.tab_resumen, text="📅 Resumen Mensual / Anual [Admin]")
+        self._construir_pestana_resumen()
+
+        # Evento de cambio de pestaña para cargar cartera y resumen bajo demanda
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_cambiada)
 
         self.al_mostrar()
@@ -91,7 +96,7 @@ class PantallaReportes(tk.Frame):
     # =========================================================================
 
     def _construir_pestana_arqueo(self) -> None:
-        self.tab_arqueo.grid_rowconfigure(2, weight=1)
+        self.tab_arqueo.grid_rowconfigure(4, weight=1)
         self.tab_arqueo.grid_columnconfigure(0, weight=1)
 
         # A. Barra Superior: Selector de Fecha y Refresco
@@ -182,7 +187,44 @@ class PantallaReportes(tk.Frame):
             font_size=15,
         )
 
-        # C. Detalle Cronológico de Movimientos (Treeview de solo lectura)
+        # C. Tarjetas KPI de Ganancia (Solo Administrador)
+        self.frame_ganancia_arqueo = tk.Frame(self.tab_arqueo, background=COLOR_FONDO_APP)
+        self.frame_ganancia_arqueo.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        for col_idx in range(4):
+            self.frame_ganancia_arqueo.grid_columnconfigure(col_idx, weight=1)
+
+        self.lbl_kpi_total_vendido = self._crear_kpi_card(
+            self.frame_ganancia_arqueo, 0, "🛒 Total vendido", "$ 0.00", "#2c3e50"
+        )
+        self.lbl_kpi_ganancia_mano = self._crear_kpi_card(
+            self.frame_ganancia_arqueo, 1, "💰 Ganancia en mano", "$ 0.00", "#155724"
+        )
+        self.lbl_kpi_ganancia_cobrar = self._crear_kpi_card(
+            self.frame_ganancia_arqueo, 2, "⏳ Ganancia por cobrar (fiado)", "$ 0.00", "#d35400"
+        )
+        self.lbl_kpi_ganancia_total = self._crear_kpi_card(
+            self.frame_ganancia_arqueo, 3, "📈 Ganancia total", "$ 0.00", "#1b4f72"
+        )
+
+        # D. Aviso de Ventas sin Costo
+        self.lbl_aviso_sin_costo = tk.Label(
+            self.tab_arqueo,
+            text="",
+            font=FUENTE_PEQUENA,
+            background=COLOR_ALERTA_BG,
+            foreground=COLOR_ALERTA_TEXTO,
+            highlightbackground=COLOR_ALERTA_BORDE,
+            highlightthickness=1,
+            padx=10,
+            pady=6,
+            justify=tk.LEFT,
+            anchor="w",
+        )
+        self.lbl_aviso_sin_costo.grid(row=3, column=0, sticky="ew", pady=(0, 6))
+        ajustar_wraplength(self.lbl_aviso_sin_costo)
+        self.lbl_aviso_sin_costo.grid_remove()
+
+        # E. Detalle Cronológico de Movimientos (Treeview de solo lectura)
         frame_tree_arq = tk.Frame(
             self.tab_arqueo,
             background=COLOR_BLANCO,
@@ -191,7 +233,7 @@ class PantallaReportes(tk.Frame):
             padx=10,
             pady=8,
         )
-        frame_tree_arq.grid(row=2, column=0, sticky="nsew")
+        frame_tree_arq.grid(row=4, column=0, sticky="nsew")
         frame_tree_arq.grid_rowconfigure(1, weight=1)
         frame_tree_arq.grid_columnconfigure(0, weight=1)
 
@@ -310,6 +352,27 @@ class PantallaReportes(tk.Frame):
             self.lbl_kpi_v_credito.config(text=f"${datos['ventas_credito']:,.2f}")
             self.lbl_kpi_abonos.config(text=f"${datos['abonos_cxc']:,.2f}")
             self.lbl_kpi_total_caja.config(text=f"${datos['total_efectivo_en_caja']:,.2f}")
+
+            # Actualizar KPIs de Ganancia (4 tarjetas)
+            self.lbl_kpi_total_vendido.config(text=f"${datos.get('total_vendido', 0.0):,.2f}")
+            self.lbl_kpi_ganancia_mano.config(text=f"${datos.get('ganancia_en_mano', 0.0):,.2f}")
+            self.lbl_kpi_ganancia_cobrar.config(text=f"${datos.get('ganancia_por_cobrar', 0.0):,.2f}")
+            self.lbl_kpi_ganancia_total.config(text=f"${datos.get('ganancia_total', 0.0):,.2f}")
+
+            # Aviso de líneas sin costo registrado
+            if datos.get("lineas_sin_costo", 0) > 0 and self.sesion.es_admin:
+                v_sin_costo = f"${datos.get('ventas_sin_costo', 0.0):,.2f}"
+                l_sin_costo = datos["lineas_sin_costo"]
+                self.lbl_aviso_sin_costo.config(
+                    text=f"ℹ {v_sin_costo} en ventas rápidas por monto o productos sin costo ({l_sin_costo} línea(s)): no se incluyen en la ganancia porque no se sabe cuánto costaron."
+                )
+                self.lbl_aviso_sin_costo.grid(row=3, column=0, sticky="ew", pady=(0, 6))
+            else:
+                self.lbl_aviso_sin_costo.grid_remove()
+
+            if not self.sesion.es_admin:
+                self.frame_ganancia_arqueo.grid_remove()
+                self.lbl_aviso_sin_costo.grid_remove()
 
             # Actualizar Treeview
             for r in self.tree_arqueo.get_children():
@@ -657,31 +720,293 @@ class PantallaReportes(tk.Frame):
         )
 
     # =========================================================================
+    # PESTAÑA 3: RESUMEN MENSUAL / ANUAL [ADMIN]
+    # =========================================================================
+
+    def _construir_pestana_resumen(self) -> None:
+        self.tab_resumen.grid_rowconfigure(3, weight=1)
+        self.tab_resumen.grid_columnconfigure(0, weight=1)
+
+        # A. Barra Superior: Filtro Año y Mes
+        frame_controles = tk.Frame(
+            self.tab_resumen,
+            background=COLOR_BLANCO,
+            highlightbackground=COLOR_BORDE_NEUTRAL,
+            highlightthickness=1,
+            padx=12,
+            pady=8,
+        )
+        frame_controles.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+        frame_fila = tk.Frame(frame_controles, background=COLOR_BLANCO)
+        frame_fila.pack(fill=tk.X)
+
+        tk.Label(
+            frame_fila,
+            text="📅 Año:",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_BLANCO,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        anio_actual = date.today().year
+        anios = [str(anio_actual - i) for i in range(5)]
+        self.combo_anio_resumen = ttk.Combobox(
+            frame_fila, values=anios, state="readonly", width=8
+        )
+        self.combo_anio_resumen.set(str(anio_actual))
+        self.combo_anio_resumen.pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Label(
+            frame_fila,
+            text="Mes:",
+            font=FUENTE_BASE_BOLD,
+            background=COLOR_BLANCO,
+            foreground=COLOR_TEXTO_PRINCIPAL,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        meses_nombres = [
+            "Todo el año", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        ]
+        self.combo_mes_resumen = ttk.Combobox(
+            frame_fila, values=meses_nombres, state="readonly", width=14
+        )
+        self.combo_mes_resumen.set(meses_nombres[date.today().month])
+        self.combo_mes_resumen.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.btn_consultar_resumen = ttk.Button(
+            frame_fila,
+            text="🔄 Consultar",
+            style="Primary.TButton",
+            command=self._cargar_resumen,
+        )
+        self.btn_consultar_resumen.pack(side=tk.LEFT)
+
+        self.lbl_estado_resumen = tk.Label(
+            frame_controles,
+            text="",
+            font=FUENTE_PEQUENA,
+            background=COLOR_BLANCO,
+            foreground=COLOR_TEXTO_MUTED,
+            justify=tk.LEFT,
+        )
+        self.lbl_estado_resumen.pack(fill=tk.X, anchor="w", pady=(4, 0))
+        ajustar_wraplength(self.lbl_estado_resumen)
+
+        # B. Tarjetas KPI de Resumen (5 Tarjetas)
+        frame_tarjetas = tk.Frame(self.tab_resumen, background=COLOR_FONDO_APP)
+        frame_tarjetas.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        for col_idx in range(5):
+            frame_tarjetas.grid_columnconfigure(col_idx, weight=1)
+
+        self.lbl_res_ingresos = self._crear_kpi_card(
+            frame_tarjetas, 0, "💵 Dinero que entró", "$ 0.00", "#155724"
+        )
+        self.lbl_res_vendido = self._crear_kpi_card(
+            frame_tarjetas, 1, "🛒 Total vendido", "$ 0.00", "#2c3e50"
+        )
+        self.lbl_res_ganancia_mano = self._crear_kpi_card(
+            frame_tarjetas, 2, "💰 Ganancia en mano", "$ 0.00", "#155724"
+        )
+        self.lbl_res_ganancia_cobrar = self._crear_kpi_card(
+            frame_tarjetas, 3, "⏳ Ganancia por cobrar (fiado)", "$ 0.00", "#d35400"
+        )
+        self.lbl_res_ganancia_total = self._crear_kpi_card(
+            frame_tarjetas, 4, "📈 Ganancia total", "$ 0.00", "#1b4f72"
+        )
+
+        # C. Aviso de Líneas sin Costo en el Periodo
+        self.lbl_aviso_sin_costo_resumen = tk.Label(
+            self.tab_resumen,
+            text="",
+            font=FUENTE_PEQUENA,
+            background=COLOR_ALERTA_BG,
+            foreground=COLOR_ALERTA_TEXTO,
+            highlightbackground=COLOR_ALERTA_BORDE,
+            highlightthickness=1,
+            padx=10,
+            pady=6,
+            justify=tk.LEFT,
+            anchor="w",
+        )
+        self.lbl_aviso_sin_costo_resumen.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        ajustar_wraplength(self.lbl_aviso_sin_costo_resumen)
+        self.lbl_aviso_sin_costo_resumen.grid_remove()
+
+        # D. Tabla Detalle del Periodo (Treeview solo lectura)
+        frame_tree_res = tk.Frame(
+            self.tab_resumen,
+            background=COLOR_BLANCO,
+            highlightbackground=COLOR_BORDE_NEUTRAL,
+            highlightthickness=1,
+            padx=10,
+            pady=8,
+        )
+        frame_tree_res.grid(row=3, column=0, sticky="nsew")
+        frame_tree_res.grid_rowconfigure(0, weight=1)
+        frame_tree_res.grid_columnconfigure(0, weight=1)
+
+        columnas_res = (
+            "periodo",
+            "total_vendido",
+            "total_ingresos",
+            "ganancia_en_mano",
+            "ganancia_por_cobrar",
+            "ganancia_total",
+        )
+        self.tree_resumen = ttk.Treeview(
+            frame_tree_res,
+            columns=columnas_res,
+            show="headings",
+            selectmode="browse",
+        )
+        self.tree_resumen.heading("periodo", text="Día")
+        self.tree_resumen.heading("total_vendido", text="Total Vendido")
+        self.tree_resumen.heading("total_ingresos", text="Dinero que entró")
+        self.tree_resumen.heading("ganancia_en_mano", text="Ganancia en Mano")
+        self.tree_resumen.heading("ganancia_por_cobrar", text="Ganancia por Cobrar")
+        self.tree_resumen.heading("ganancia_total", text="Ganancia Total")
+
+        self.tree_resumen.column("periodo", anchor=tk.CENTER)
+        self.tree_resumen.column("total_vendido", anchor=tk.E)
+        self.tree_resumen.column("total_ingresos", anchor=tk.E)
+        self.tree_resumen.column("ganancia_en_mano", anchor=tk.E)
+        self.tree_resumen.column("ganancia_por_cobrar", anchor=tk.E)
+        self.tree_resumen.column("ganancia_total", anchor=tk.E)
+
+        configurar_columnas(
+            self.tree_resumen,
+            {
+                "periodo": (110, 85),
+                "total_vendido": (120, 95),
+                "total_ingresos": (130, 100),
+                "ganancia_en_mano": (130, 100),
+                "ganancia_por_cobrar": (140, 110),
+                "ganancia_total": (130, 100),
+            },
+        )
+
+        scroll_res = ttk.Scrollbar(
+            frame_tree_res, orient="vertical", command=self.tree_resumen.yview
+        )
+        self.tree_resumen.configure(yscrollcommand=scroll_res.set)
+        self.tree_resumen.grid(row=0, column=0, sticky="nsew")
+        scroll_res.grid(row=0, column=1, sticky="ns")
+
+        self.scroll_h_resumen = agregar_scroll_horizontal(
+            self.tree_resumen, frame_tree_res, row=1, column=0
+        )
+
+    def _cargar_resumen(self) -> None:
+        """Consulta el resumen mensual o anual y actualiza controles, tarjetas y tabla."""
+        try:
+            anio_str = self.combo_anio_resumen.get().strip()
+            anio = int(anio_str)
+        except ValueError:
+            self.lbl_estado_resumen.config(text="Año inválido seleccionado.")
+            return
+
+        mes_nombre = self.combo_mes_resumen.get().strip()
+        meses_nombres = [
+            "Todo el año", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        ]
+        if mes_nombre in meses_nombres and mes_nombre != "Todo el año":
+            mes = meses_nombres.index(mes_nombre)
+        else:
+            mes = None
+
+        try:
+            datos = reportes_service.obtener_resumen_periodo(
+                anio=anio, mes=mes, conn=self.sesion.conn
+            )
+        except ValueError as ve:
+            self.lbl_estado_resumen.config(text=str(ve))
+            return
+        except Exception as e:
+            self.lbl_estado_resumen.config(text=f"Error al consultar resumen: {e}")
+            return
+
+        # Actualizar encabezado de la columna 'periodo' según si es mes o año completo
+        if mes is not None:
+            self.tree_resumen.heading("periodo", text="Día")
+        else:
+            self.tree_resumen.heading("periodo", text="Mes")
+
+        # Actualizar 5 tarjetas
+        self.lbl_res_ingresos.config(text=f"${datos['total_ingresos']:,.2f}")
+        self.lbl_res_vendido.config(text=f"${datos['total_vendido']:,.2f}")
+        self.lbl_res_ganancia_mano.config(text=f"${datos['ganancia_en_mano']:,.2f}")
+        self.lbl_res_ganancia_cobrar.config(text=f"${datos['ganancia_por_cobrar']:,.2f}")
+        self.lbl_res_ganancia_total.config(text=f"${datos['ganancia_total']:,.2f}")
+
+        # Aviso sin costo
+        if datos.get("lineas_sin_costo", 0) > 0 and self.sesion.es_admin:
+            v_sin_costo = f"${datos['ventas_sin_costo']:,.2f}"
+            l_sin_costo = datos["lineas_sin_costo"]
+            self.lbl_aviso_sin_costo_resumen.config(
+                text=f"ℹ {v_sin_costo} en ventas rápidas por monto o productos sin costo ({l_sin_costo} línea(s)): no se incluyen en la ganancia porque no se sabe cuánto costaron."
+            )
+            self.lbl_aviso_sin_costo_resumen.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        else:
+            self.lbl_aviso_sin_costo_resumen.grid_remove()
+
+        # Actualizar Treeview
+        for r in self.tree_resumen.get_children():
+            self.tree_resumen.delete(r)
+
+        for d in datos.get("desglose", []):
+            self.tree_resumen.insert(
+                "",
+                tk.END,
+                values=(
+                    d.get("periodo", "--"),
+                    f"${d.get('total_vendido', 0.0):,.2f}",
+                    f"${d.get('total_ingresos', 0.0):,.2f}",
+                    f"${d.get('ganancia_en_mano', 0.0):,.2f}",
+                    f"${d.get('ganancia_por_cobrar', 0.0):,.2f}",
+                    f"${d.get('ganancia_total', 0.0):,.2f}",
+                ),
+            )
+
+        self.lbl_estado_resumen.config(
+            text=f"Periodo {datos['periodo']}: {datos['numero_ventas']} venta(s)"
+        )
+
+    # =========================================================================
     # CICLO DE VIDA Y CONTROL REACTIVO DE PERMISOS (al_mostrar)
     # =========================================================================
 
     def _on_tab_cambiada(self, event=None) -> None:
-        """Carga los datos de cartera cuando el Administrador ingresa a la pestaña 2."""
+        """Carga los datos de cartera o resumen cuando el Administrador ingresa a las pestañas."""
         seleccion = self.notebook.select()
         if seleccion == str(self.tab_cartera):
             self._cargar_consolidado_cartera()
+        elif seleccion == str(self.tab_resumen):
+            self._cargar_resumen()
 
     def al_mostrar(self) -> None:
         """
         Hook invocado por App.navegar_a al levantar esta pantalla.
-        Evalúa reactivamente los permisos del usuario activo y bloquea la Pestaña 2
-        para roles no administradores.
+        Evalúa reactivamente los permisos del usuario activo y bloquea las pestañas
+        administrativas para roles no administradores.
         """
         es_admin = self.sesion.es_admin
 
         if not es_admin:
-            # Vendedor: deshabilitar pestaña 2 y forzar selección a pestaña 1
+            # Vendedor: deshabilitar pestañas de cartera y resumen y forzar selección a pestaña 1
             self.notebook.tab(self.tab_cartera, state="disabled")
-            if self.notebook.select() == str(self.tab_cartera):
+            self.notebook.tab(self.tab_resumen, state="disabled")
+            if self.notebook.select() in (str(self.tab_cartera), str(self.tab_resumen)):
                 self.notebook.select(self.tab_arqueo)
+            self.frame_ganancia_arqueo.grid_remove()
+            self.lbl_aviso_sin_costo.grid_remove()
         else:
-            # Admin: habilitar pestaña 2
+            # Admin: habilitar pestañas
             self.notebook.tab(self.tab_cartera, state="normal")
+            self.notebook.tab(self.tab_resumen, state="normal")
+            self.frame_ganancia_arqueo.grid(row=2, column=0, sticky="ew", pady=(0, 8))
 
         # Refrescar automáticamente el arqueo diario
         self._cargar_arqueo_diario()
