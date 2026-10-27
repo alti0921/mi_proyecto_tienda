@@ -197,14 +197,26 @@ class PantallaReportes(tk.Frame):
             self.frame_ganancia_arqueo, 0, "🛒 Total vendido", "$ 0.00", "#2c3e50"
         )
         self.lbl_kpi_ganancia_mano = self._crear_kpi_card(
-            self.frame_ganancia_arqueo, 1, "💰 Ganancia en mano", "$ 0.00", "#155724"
+            self.frame_ganancia_arqueo, 1, "💰 Ganancia de ventas de contado", "$ 0.00", "#155724"
         )
         self.lbl_kpi_ganancia_cobrar = self._crear_kpi_card(
-            self.frame_ganancia_arqueo, 2, "⏳ Ganancia por cobrar (fiado)", "$ 0.00", "#d35400"
+            self.frame_ganancia_arqueo, 2, "📑 Ganancia de ventas fiadas", "$ 0.00", "#d35400"
         )
         self.lbl_kpi_ganancia_total = self._crear_kpi_card(
             self.frame_ganancia_arqueo, 3, "📈 Ganancia total", "$ 0.00", "#1b4f72"
         )
+
+        self.lbl_nota_ganancia_arqueo = tk.Label(
+            self.frame_ganancia_arqueo,
+            text="La ganancia se cuenta el día de la venta. Los abonos entran a la caja, pero no cambian la ganancia.",
+            font=FUENTE_PEQUENA,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_MUTED,
+            justify=tk.LEFT,
+            anchor="w",
+        )
+        self.lbl_nota_ganancia_arqueo.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        ajustar_wraplength(self.lbl_nota_ganancia_arqueo)
 
         # D. Aviso de Ventas sin Costo
         self.lbl_aviso_sin_costo = tk.Label(
@@ -807,14 +819,26 @@ class PantallaReportes(tk.Frame):
             frame_tarjetas, 1, "🛒 Total vendido", "$ 0.00", "#2c3e50"
         )
         self.lbl_res_ganancia_mano = self._crear_kpi_card(
-            frame_tarjetas, 2, "💰 Ganancia en mano", "$ 0.00", "#155724"
+            frame_tarjetas, 2, "💰 Ganancia de ventas de contado", "$ 0.00", "#155724"
         )
         self.lbl_res_ganancia_cobrar = self._crear_kpi_card(
-            frame_tarjetas, 3, "⏳ Ganancia por cobrar (fiado)", "$ 0.00", "#d35400"
+            frame_tarjetas, 3, "📑 Ganancia de ventas fiadas", "$ 0.00", "#d35400"
         )
         self.lbl_res_ganancia_total = self._crear_kpi_card(
             frame_tarjetas, 4, "📈 Ganancia total", "$ 0.00", "#1b4f72"
         )
+
+        self.lbl_nota_ganancia_resumen = tk.Label(
+            frame_tarjetas,
+            text="La ganancia se cuenta el día de la venta. Los abonos entran a la caja, pero no cambian la ganancia.",
+            font=FUENTE_PEQUENA,
+            background=COLOR_FONDO_APP,
+            foreground=COLOR_TEXTO_MUTED,
+            justify=tk.LEFT,
+            anchor="w",
+        )
+        self.lbl_nota_ganancia_resumen.grid(row=1, column=0, columnspan=5, sticky="ew", pady=(4, 0))
+        ajustar_wraplength(self.lbl_nota_ganancia_resumen)
 
         # C. Aviso de Líneas sin Costo en el Periodo
         self.lbl_aviso_sin_costo_resumen = tk.Label(
@@ -864,8 +888,8 @@ class PantallaReportes(tk.Frame):
         self.tree_resumen.heading("periodo", text="Día")
         self.tree_resumen.heading("total_vendido", text="Total Vendido")
         self.tree_resumen.heading("total_ingresos", text="Dinero que entró")
-        self.tree_resumen.heading("ganancia_en_mano", text="Ganancia en Mano")
-        self.tree_resumen.heading("ganancia_por_cobrar", text="Ganancia por Cobrar")
+        self.tree_resumen.heading("ganancia_en_mano", text="Ganancia Contado")
+        self.tree_resumen.heading("ganancia_por_cobrar", text="Ganancia Fiado")
         self.tree_resumen.heading("ganancia_total", text="Ganancia Total")
 
         self.tree_resumen.column("periodo", anchor=tk.CENTER)

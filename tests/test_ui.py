@@ -2799,6 +2799,7 @@ def test_resumen_visible_en_ventana_minima(ui_app):
         assert _dentro_de(rep.lbl_kpi_ganancia_mano, ui_app)
         assert _dentro_de(rep.lbl_kpi_ganancia_cobrar, ui_app)
         assert _dentro_de(rep.lbl_kpi_ganancia_total, ui_app)
+        assert _dentro_de(rep.lbl_nota_ganancia_arqueo, ui_app)
 
         # En pestaña Resumen: btn_consultar_resumen y tree_resumen quedan dentro de la ventana
         rep.notebook.select(rep.tab_resumen)
@@ -3187,6 +3188,91 @@ def test_monto_invalido_muestra_mensaje(ui_app):
         cur = conn.cursor()
         cur.execute("SELECT id FROM productos WHERE nombre = ?", (nombre_test,))
         assert cur.fetchone() is None
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_textos_ganancia_claros(ui_app):
+    """
+    Recorrer los widgets de la pantalla de reportes y verificar que existen etiquetas con
+    'Ganancia de ventas de contado' y 'Ganancia de ventas fiadas', y que NINGUNA etiqueta
+    contiene 'por cobrar' ni 'en mano'; encabezados de tree_resumen 'Ganancia Contado' y 'Ganancia Fiado'.
+    """
+    try:
+        ui_app.deiconify()
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        ui_app.update()
+
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+
+        def _obtener_labels(w):
+            labels = []
+            if isinstance(w, tk.Label):
+                labels.append(w.cget("text"))
+            for child in w.winfo_children():
+                labels.extend(_obtener_labels(child))
+            return labels
+
+        textos_labels = _obtener_labels(rep)
+
+        # 1. Existen etiquetas con los nuevos nombres
+        assert any("Ganancia de ventas de contado" in t for t in textos_labels)
+        assert any("Ganancia de ventas fiadas" in t for t in textos_labels)
+
+        # 2. NINGUNA etiqueta contiene "por cobrar" ni "en mano"
+        for t in textos_labels:
+            assert "por cobrar" not in t.lower(), f"Se encontró 'por cobrar' en etiqueta: {t}"
+            assert "en mano" not in t.lower(), f"Se encontró 'en mano' en etiqueta: {t}"
+
+        # 3. Encabezados de tree_resumen
+        assert rep.tree_resumen.heading("ganancia_en_mano", "text") == "Ganancia Contado"
+        assert rep.tree_resumen.heading("ganancia_por_cobrar", "text") == "Ganancia Fiado"
+    finally:
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.withdraw()
+        ui_app.update()
+
+
+def test_nota_ganancia_visible_solo_admin(ui_app):
+    """
+    Como admin, lbl_nota_ganancia_arqueo visible (winfo_ismapped tras deiconify/update)
+    con el texto exacto; como vendedor, no visible. Terminar como admin.
+    """
+    try:
+        ui_app.deiconify()
+
+        # 1. Como Administrador: visible con texto exacto
+        _login_como(ui_app, "admin", "admin123")
+        ui_app.navegar_a("reportes")
+        rep: PantallaReportes = ui_app.pantallas["reportes"]
+        rep.notebook.select(rep.tab_arqueo)
+        ui_app.update()
+
+        texto_esperado = (
+            "La ganancia se cuenta el día de la venta. Los abonos entran a la caja, pero no cambian la ganancia."
+        )
+        assert rep.lbl_nota_ganancia_arqueo.cget("text") == texto_esperado
+        assert rep.lbl_nota_ganancia_arqueo.winfo_ismapped()
+
+        # Verificación con tamaño mínimo
+        min_w, min_h = ui_app.minsize()
+        geom_orig = ui_app.geometry()
+        ui_app.geometry(f"{min_w}x{min_h}")
+        ui_app.update()
+        assert _dentro_de(rep.lbl_nota_ganancia_arqueo, ui_app)
+        ui_app.geometry(geom_orig)
+        ui_app.update()
+
+        # 2. Como Vendedor: no visible
+        _login_como(ui_app, "vendedor", "vend123")
+        ui_app.navegar_a("reportes")
+        ui_app.update()
+
+        assert not rep.lbl_nota_ganancia_arqueo.winfo_ismapped()
+
     finally:
         _login_como(ui_app, "admin", "admin123")
         ui_app.withdraw()
